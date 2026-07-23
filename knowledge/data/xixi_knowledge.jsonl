@@ -1,0 +1,7 @@
+{"id": 1, "category": "place_alias", "title": "北京南站", "content": "北京南站常见别名包括南站、北京高铁南站。推荐上车点为北广场网约车上客区。"}
+{"id": 2, "category": "vehicle", "title": "轻享车型", "content": "轻享车型最多乘坐四人，适合一至三人日常通勤，价格更经济。"}
+{"id": 3, "category": "vehicle", "title": "舒适车型", "content": "舒适车型最多乘坐四人，车内空间和乘坐体验更好，适合商务或携带小件行李出行。"}
+{"id": 4, "category": "vehicle", "title": "六座车型", "content": "六座车型最多乘坐六人，适合多人同行或携带多件行李。"}
+{"id": 5, "category": "policy", "title": "报价有效期", "content": "嘻嘻出行的预估报价默认有效期为五分钟。超过有效期后，下单前需要重新询价。"}
+{"id": 6, "category": "safety", "title": "安全确认", "content": "创建或取消订单属于重要操作。智能出行 Agent 必须在调用工具前取得用户明确确认。"}
+{"id": 7, "category": "invoice", "title": "行程发票", "content": "已完成的行程可以在行程详情中申请电子发票。发票金额以最终结算金额为准。"}

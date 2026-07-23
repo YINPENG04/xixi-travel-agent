@@ -1,0 +1,31 @@
+spring:
+  application:
+    name: xixi-ride-service
+  ai:
+    mcp:
+      server:
+        name: xixi-ride-tools
+        version: 0.1.0
+        type: SYNC
+        instructions: >
+          嘻嘻出行工具提供报价、创建订单、查询状态和取消订单能力。
+          创建或取消订单前必须取得用户明确确认。
+        sse-message-endpoint: /mcp/messages
+
+server:
+  port: ${PORT:8081}
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info
+  endpoint:
+    health:
+      probes:
+        enabled: true
+
+info:
+  app:
+    name: 嘻嘻出行
+    description: 智能出行 Agent 业务与 MCP 服务

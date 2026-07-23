@@ -1,0 +1,18 @@
+package cn.xixitravel.ride.mcp;
+
+import cn.xixitravel.ride.service.RideService;
+import org.springframework.ai.tool.ToolCallbackProvider;
+import org.springframework.ai.tool.method.MethodToolCallbackProvider;
+import org.springframework.context.annotation.Bean;
+import org.springframework.context.annotation.Configuration;
+
+@Configuration
+public class McpToolConfiguration {
+
+    @Bean
+    ToolCallbackProvider xixiRideTools(RideService rideService) {
+        return MethodToolCallbackProvider.builder()
+                .toolObjects(new RideTools(rideService))
+                .build();
+    }
+}

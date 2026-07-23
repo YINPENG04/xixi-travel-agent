@@ -1,0 +1,28 @@
+version: 1.2.1
+cache: true
+
+interface:
+  privacyPolicy:
+    externalUrl: https://example.com/privacy
+    openNewTab: true
+  termsOfService:
+    externalUrl: https://example.com/terms
+    openNewTab: true
+
+registration:
+  socialLogins: []
+
+mcpServers:
+  xixi-rides:
+    type: sse
+    url: http://ride-service:8081/sse
+    timeout: 30000
+
+endpoints:
+  agents:
+    disableBuilder: false
+    capabilities:
+      - execute_code
+      - file_search
+      - actions
+      - tools
