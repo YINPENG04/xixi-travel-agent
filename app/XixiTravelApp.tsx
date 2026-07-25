@@ -144,7 +144,7 @@ function invoiceLabel(status: InvoiceStatus) {
   return {
     available: "可开票",
     processing: "开票中",
-    issued: "已开具",
+    issued: "申请成功",
     unavailable: "不可开票",
   }[status];
 }
@@ -490,7 +490,9 @@ export function XixiTravelApp() {
     );
     setSelectedInvoiceTripId(null);
     setInvoiceEmail("");
-    setNotice(`电子发票已开具，并发送至 ${invoiceEmail.trim()}`);
+    setNotice(
+      `发票申请已记录，通知邮箱：${invoiceEmail.trim()}（演示版不会实际发送邮件）`,
+    );
   }
 
   return (
@@ -954,7 +956,7 @@ export function XixiTravelApp() {
             <div>
               <span className="eyebrow">E-INVOICE</span>
               <h1>行程发票</h1>
-              <p>选择已完成的行程，填写接收邮箱即可申请电子发票。</p>
+              <p>选择已完成的行程，填写接收邮箱即可登记开票申请。</p>
             </div>
             <div className="invoice-total">
               <span>可开票金额</span>
@@ -994,7 +996,7 @@ export function XixiTravelApp() {
                         · {trip.vehicle} · {trip.id}
                       </span>
                       {trip.invoiceNumber && (
-                        <small>发票号码：{trip.invoiceNumber}</small>
+                        <small>申请编号：{trip.invoiceNumber}</small>
                       )}
                     </div>
                     <div className="invoice-state">
@@ -1015,7 +1017,7 @@ export function XixiTravelApp() {
                         trip.invoiceStatus === "available"
                           ? setSelectedInvoiceTripId(trip.id)
                           : setNotice(
-                              `电子发票 ${trip.invoiceNumber ?? ""} 已发送`,
+                              `发票申请 ${trip.invoiceNumber ?? ""} 已登记`,
                             )
                       }
                     >
@@ -1073,10 +1075,10 @@ export function XixiTravelApp() {
                     </strong>
                   </div>
                   <button className="invoice-submit" type="submit">
-                    确认申请电子发票
+                    确认提交开票申请
                   </button>
                   <small>
-                    提交即表示确认开票信息无误。演示数据仅保存在当前设备。
+                    提交即表示确认开票信息无误。演示数据仅保存在当前设备，不会实际发送邮件。
                   </small>
                 </form>
               ) : (
@@ -1084,12 +1086,12 @@ export function XixiTravelApp() {
                   <span className="invoice-guide-mark">票</span>
                   <h2>电子发票</h2>
                   <p>
-                    选择左侧“可开票”行程开始申请。已开具的发票可以再次查看发送状态。
+                    选择左侧“可开票”行程开始申请。已提交的申请可以再次查看登记状态。
                   </p>
                   <ul>
                     <li>仅支持已完成行程</li>
                     <li>金额以行程结算为准</li>
-                    <li>提交后发送至指定邮箱</li>
+                    <li>演示版不会实际发送邮件</li>
                   </ul>
                 </div>
               )}
