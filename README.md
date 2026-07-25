@@ -4,14 +4,30 @@
 
 嘻嘻出行是一个面向打车、路线规划和行程服务场景的智能出行 Agent 开源项目。项目包含可独立运行的 React/MapLibre 演示界面、基于 LibreChat 的 Agent 入口、Spring Boot 出行业务服务、Spring AI MCP 工具，以及 Milvus 知识库初始化脚本。
 
-> 嘻嘻出行的产品形态可类比滴滴“AI 小滴”，但属于独立开发项目，与滴滴及“AI 小滴”不存在隶属、授权、代码继承或合作关系。
 
 ![嘻嘻出行界面](./public/og.png)
 
 ## 在线体验
 
-- 公开演示：[https://xixi-travel-agent.yinp05838.chatgpt.site](https://xixi-travel-agent.yinp05838.chatgpt.site)
+- 公开演示：[https://yinpeng04.github.io/xixi-travel-agent/](https://yinpeng04.github.io/xixi-travel-agent/)
 - 源码仓库：[https://github.com/YINPENG04/xixi-travel-agent](https://github.com/YINPENG04/xixi-travel-agent)
+
+## 直接体验基本功能
+
+打开公开演示地址即可直接使用，无需登录、安装软件或配置模型密钥：
+
+[进入嘻嘻出行在线演示 →](https://yinpeng04.github.io/xixi-travel-agent/)
+
+| 功能 | 操作方式 |
+|---|---|
+| 路线规划 | 输入目的地或选择北京南站、首都机场等快捷地点 |
+| 车型报价 | 切换轻享、舒适、六座，查看价格与预计接驾时间 |
+| 模拟叫车 | 选择车型并确认，查看司机、车辆和接驾倒计时 |
+| 行程管理 | 打开“行程”，查看当前订单和历史记录，可取消或完成演示行程 |
+| 发票演示 | 完成行程后打开“发票”，登记抬头和接收邮箱 |
+| 实时时间 | 页面顶部显示持续更新的北京时间 |
+
+演示数据只保存在当前浏览器中，不会创建真实订单、扣款或发送发票邮件。
 
 ## 项目定位
 
@@ -427,7 +443,9 @@ mvn test
 
 ## 部署说明
 
-在线交互演示使用 Vinext 构建为 Cloudflare Worker 兼容产物。`worker/index.ts` 是 Worker 入口，`build/sites-vite-plugin.ts` 在构建结束后打包站点元数据。
+公开演示通过 `vite.github-pages.config.ts` 构建为纯静态前端，并由 GitHub Actions 自动发布到 GitHub Pages。该版本无需登录即可使用，但不运行 Java、LibreChat 或 MCP 后端。
+
+仓库同时保留 Vinext/Cloudflare Worker 构建方式。`worker/index.ts` 是 Worker 入口，`build/sites-vite-plugin.ts` 在构建结束后打包站点元数据。
 
 完整 Agent 链路包含 MongoDB、Redis、Meilisearch、Spring Boot、Milvus、etcd 和 MinIO，不等同于单页演示站点，需要使用 Docker Compose 或等价基础设施单独部署。
 
