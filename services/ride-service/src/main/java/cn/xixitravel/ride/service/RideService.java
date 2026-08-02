@@ -6,7 +6,15 @@ import cn.xixitravel.ride.domain.RideOrder;
 import cn.xixitravel.ride.domain.RideQuote;
 import cn.xixitravel.ride.domain.RideStatus;
 import cn.xixitravel.ride.domain.VehicleType;
+import cn.xixitravel.ride.persistence.RideOrderEntity;
+import cn.xixitravel.ride.persistence.RideOrderRepository;
+import cn.xixitravel.ride.persistence.RideQuoteEntity;
+import cn.xixitravel.ride.persistence.RideQuoteRepository;
+import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.PlatformTransactionManager;
+import org.springframework.transaction.annotation.Transactional;
+import org.springframework.transaction.support.TransactionTemplate;
 
 import java.math.BigDecimal;
 import java.math.RoundingMode;
@@ -15,9 +23,8 @@ import java.time.Duration;
 import java.time.Instant;
 import java.util.Arrays;
 import java.util.List;
-import java.util.Map;
+import java.util.Objects;
 import java.util.UUID;
-import java.util.concurrent.ConcurrentHashMap;
 
 @Service
 public class RideService {
@@ -26,22 +33,27 @@ public class RideService {
     private static final Duration QUOTE_TTL = Duration.ofMinutes(5);
 
     private final Clock clock;
-    private final Map<String, RideQuote> quotes = new ConcurrentHashMap<>();
-    private final Map<String, RideOrder> orders = new ConcurrentHashMap<>();
-    private final Map<String, String> idempotencyKeys = new ConcurrentHashMap<>();
+    private final RideQuoteRepository quoteRepository;
+    private final RideOrderRepository orderRepository;
+    private final TransactionTemplate transactionTemplate;
 
-    public RideService() {
-        this(Clock.systemUTC());
-    }
-
-    RideService(Clock clock) {
+    public RideService(
+            Clock clock,
+            RideQuoteRepository quoteRepository,
+            RideOrderRepository orderRepository,
+            PlatformTransactionManager transactionManager
+    ) {
         this.clock = clock;
+        this.quoteRepository = quoteRepository;
+        this.orderRepository = orderRepository;
+        this.transactionTemplate = new TransactionTemplate(transactionManager);
     }
 
+    @Transactional
     public List<RideQuote> quote(QuoteRequest request) {
         Instant expiresAt = clock.instant().plus(QUOTE_TTL);
 
-        return Arrays.stream(VehicleType.values())
+        List<RideQuote> quotes = Arrays.stream(VehicleType.values())
                 .map(type -> {
                     BigDecimal base = BASE_FARE.add(
                             PER_KILOMETER.multiply(BigDecimal.valueOf(request.distanceKilometers()))
@@ -63,10 +75,12 @@ public class RideService {
                             request.durationMinutes(),
                             expiresAt
                     );
-                    quotes.put(quote.quoteId(), quote);
                     return quote;
                 })
                 .toList();
+
+        quoteRepository.saveAll(quotes.stream().map(RideQuoteEntity::from).toList());
+        return quotes;
     }
 
     public RideOrder createRide(
@@ -74,62 +88,87 @@ public class RideService {
             String idempotencyKey,
             CreateRideRequest request
     ) {
-        String existingOrderId = idempotencyKeys.get(scopedKey(userId, idempotencyKey));
-        if (existingOrderId != null) {
-            return getRide(userId, existingOrderId);
+        String normalizedUserId = requireText(userId, "用户 ID", 128);
+        String normalizedKey = requireText(idempotencyKey, "Idempotency-Key", 128);
+
+        RideOrder existing = orderRepository
+                .findByUserIdAndIdempotencyKey(normalizedUserId, normalizedKey)
+                .map(RideOrderEntity::toDomain)
+                .orElse(null);
+        if (existing != null) {
+            return existing;
         }
 
-        RideQuote quote = requireValidQuote(request.quoteId());
-        RideOrder order = new RideOrder(
-                "XIXI-" + UUID.randomUUID().toString().substring(0, 8).toUpperCase(),
-                userId,
-                quote.quoteId(),
-                request.origin(),
-                request.destination(),
-                quote.vehicleType(),
-                quote.price(),
-                clock.instant()
-        );
-        orders.put(order.getOrderId(), order);
-        idempotencyKeys.putIfAbsent(scopedKey(userId, idempotencyKey), order.getOrderId());
-        return orders.get(idempotencyKeys.get(scopedKey(userId, idempotencyKey)));
+        try {
+            return Objects.requireNonNull(transactionTemplate.execute(status -> {
+                RideOrderEntity concurrentExisting = orderRepository
+                        .findByUserIdAndIdempotencyKey(normalizedUserId, normalizedKey)
+                        .orElse(null);
+                if (concurrentExisting != null) {
+                    return concurrentExisting.toDomain();
+                }
+
+                RideQuote quote = requireValidQuote(request.quoteId());
+                RideOrderEntity order = new RideOrderEntity(
+                        "XIXI-" + UUID.randomUUID().toString().substring(0, 8).toUpperCase(),
+                        normalizedUserId,
+                        normalizedKey,
+                        quote,
+                        requireText(request.origin(), "出发地", 255),
+                        requireText(request.destination(), "目的地", 255),
+                        clock.instant()
+                );
+                return orderRepository.saveAndFlush(order).toDomain();
+            }));
+        } catch (DataIntegrityViolationException exception) {
+            return orderRepository
+                    .findByUserIdAndIdempotencyKey(normalizedUserId, normalizedKey)
+                    .map(RideOrderEntity::toDomain)
+                    .orElseThrow(() -> exception);
+        }
     }
 
+    @Transactional(readOnly = true)
     public RideOrder getRide(String userId, String orderId) {
-        RideOrder order = orders.get(orderId);
-        if (order == null || !order.getUserId().equals(userId)) {
-            throw new RideNotFoundException(orderId);
-        }
-        return order;
+        return orderRepository.findByOrderIdAndUserId(orderId, userId)
+                .map(RideOrderEntity::toDomain)
+                .orElseThrow(() -> new RideNotFoundException(orderId));
     }
 
+    @Transactional
     public RideOrder cancel(String userId, String orderId) {
-        return getRide(userId, orderId).transitionTo(RideStatus.CANCELLED);
+        RideOrderEntity order = orderRepository.findOwnedForUpdate(orderId, userId)
+                .orElseThrow(() -> new RideNotFoundException(orderId));
+        order.transitionTo(RideStatus.CANCELLED);
+        return order.toDomain();
     }
 
+    @Transactional
     public RideOrder transition(String orderId, RideStatus status) {
-        RideOrder order = orders.get(orderId);
-        if (order == null) {
-            throw new RideNotFoundException(orderId);
-        }
-        return order.transitionTo(status);
+        RideOrderEntity order = orderRepository.findForUpdate(orderId)
+                .orElseThrow(() -> new RideNotFoundException(orderId));
+        order.transitionTo(status);
+        return order.toDomain();
     }
 
     private RideQuote requireValidQuote(String quoteId) {
-        RideQuote quote = quotes.get(quoteId);
-        if (quote == null) {
-            throw new IllegalArgumentException("报价不存在：" + quoteId);
-        }
+        RideQuote quote = quoteRepository.findById(quoteId)
+                .map(RideQuoteEntity::toDomain)
+                .orElseThrow(() -> new IllegalArgumentException("报价不存在：" + quoteId));
         if (quote.isExpired(clock.instant())) {
             throw new IllegalArgumentException("报价已过期，请重新询价");
         }
         return quote;
     }
 
-    private String scopedKey(String userId, String idempotencyKey) {
-        if (idempotencyKey == null || idempotencyKey.isBlank()) {
-            throw new IllegalArgumentException("缺少 Idempotency-Key");
+    private String requireText(String value, String fieldName, int maxLength) {
+        if (value == null || value.isBlank()) {
+            throw new IllegalArgumentException("缺少" + fieldName);
         }
-        return userId + ":" + idempotencyKey;
+        String normalized = value.trim();
+        if (normalized.length() > maxLength) {
+            throw new IllegalArgumentException(fieldName + "长度不能超过 " + maxLength + " 个字符");
+        }
+        return normalized;
     }
 }

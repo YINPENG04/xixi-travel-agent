@@ -24,6 +24,30 @@ public final class RideOrder {
             BigDecimal price,
             Instant createdAt
     ) {
+        this(
+                orderId,
+                userId,
+                quoteId,
+                origin,
+                destination,
+                vehicleType,
+                price,
+                createdAt,
+                RideStatus.CREATED
+        );
+    }
+
+    public RideOrder(
+            String orderId,
+            String userId,
+            String quoteId,
+            String origin,
+            String destination,
+            VehicleType vehicleType,
+            BigDecimal price,
+            Instant createdAt,
+            RideStatus status
+    ) {
         this.orderId = orderId;
         this.userId = userId;
         this.quoteId = quoteId;
@@ -32,7 +56,7 @@ public final class RideOrder {
         this.vehicleType = vehicleType;
         this.price = price;
         this.createdAt = createdAt;
-        this.status = RideStatus.CREATED;
+        this.status = status;
     }
 
     public synchronized RideOrder transitionTo(RideStatus next) {
