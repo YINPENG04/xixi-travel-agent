@@ -40,7 +40,7 @@
 
 ## 三分钟本地体验
 
-本地界面不需要 ChatGPT 账号、地图密钥或后端服务。安装 Git 和 Node.js 22.13 或更高版本后执行：
+安装 Git 和 Node.js 22.13 或更高版本后执行：
 
 ```bash
 git clone https://github.com/YINPENG04/xixi-travel-agent.git
