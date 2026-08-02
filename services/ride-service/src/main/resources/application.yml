@@ -8,9 +8,14 @@ spring:
         version: 0.1.0
         type: SYNC
         instructions: >
-          嘻嘻出行工具提供报价、创建订单、查询状态和取消订单能力。
+          嘻嘻出行工具提供知识检索、报价、创建订单、查询状态和取消订单能力。
+          回答地点别名、车型、报价规则、安全要求或发票政策前，优先调用知识检索工具，
+          只根据检索结果中存在的事实回答；没有匹配资料时应明确说明。
           创建或取消订单前必须取得用户明确确认。
         sse-message-endpoint: /mcp/messages
+
+xixi:
+  knowledge-base-url: ${XIXI_KNOWLEDGE_BASE_URL:http://localhost:8090}
 
 server:
   port: ${PORT:8081}

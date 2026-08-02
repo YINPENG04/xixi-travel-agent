@@ -1,5 +1,6 @@
 package cn.xixitravel.ride.api;
 
+import cn.xixitravel.ride.knowledge.KnowledgeSearchUnavailableException;
 import cn.xixitravel.ride.service.RideNotFoundException;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ProblemDetail;
@@ -13,6 +14,14 @@ public class ApiExceptionHandler {
     @ExceptionHandler(RideNotFoundException.class)
     ProblemDetail handleNotFound(RideNotFoundException exception) {
         return ProblemDetail.forStatusAndDetail(HttpStatus.NOT_FOUND, exception.getMessage());
+    }
+
+    @ExceptionHandler(KnowledgeSearchUnavailableException.class)
+    ProblemDetail handleKnowledgeUnavailable(KnowledgeSearchUnavailableException exception) {
+        return ProblemDetail.forStatusAndDetail(
+                HttpStatus.SERVICE_UNAVAILABLE,
+                exception.getMessage()
+        );
     }
 
     @ExceptionHandler({

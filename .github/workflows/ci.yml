@@ -43,3 +43,16 @@ jobs:
           cache: maven
       - name: Test
         run: mvn --batch-mode test
+
+  knowledge:
+    name: RAG syntax checks
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Use Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Check Python files
+        run: python -m py_compile knowledge/seed_milvus.py knowledge/rag_service.py
