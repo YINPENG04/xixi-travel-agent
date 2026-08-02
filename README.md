@@ -2,13 +2,11 @@
 
 一个面向网约车场景的智能出行 Agent 项目。用户可以用自然语言提出出行需求，Agent 根据任务自主调用知识检索、车型询价、创建订单、查询状态、取消订单、通知查询和发票资格查询等 MCP 工具。
 
-项目重点不是复刻真实网约车平台，而是实现一条可运行、可解释的 Agent 业务链路：
-
 - 使用 LibreChat 承载用户、会话、模型接入和 Agent 对话。
 - 使用 Spring AI MCP 将出行业务能力封装为模型可调用工具。
 - 使用 Spring Boot、MySQL 实现报价、订单、状态机、权限与幂等控制。
-- 使用 RocketMQ 和 Transactional Outbox 异步处理模拟派单、超时取消、通知和发票资格。
-- 使用 sentence-transformers、Milvus 构建出行领域 RAG 知识库。
+- 使用 RocketMQ 异步处理模拟派单、超时取消、通知和发票资格。
+- 使用 Milvus 构建出行领域 RAG 知识库。
 - 提供 React + MapLibre 的独立交互演示，方便直接查看产品效果。
 
 ![嘻嘻出行界面](./public/og.png)
@@ -18,9 +16,6 @@
 - 在线演示：[https://yinpeng04.github.io/xixi-travel-agent/](https://yinpeng04.github.io/xixi-travel-agent/)
 - GitHub 仓库：[https://github.com/YINPENG04/xixi-travel-agent](https://github.com/YINPENG04/xixi-travel-agent)
 
-在线演示是纯前端版本，无需登录或配置模型密钥。它支持路线地图、车型报价、模拟叫车、接驾倒计时、行程记录和发票登记，数据只保存在当前浏览器的 `localStorage` 中，不会创建真实订单或发送发票。
-
-> 在线演示与完整 Agent 后端目前相互独立。真实业务规则、MCP 工具、MySQL、RocketMQ 和 RAG 链路位于本仓库后端服务中。
 
 ## 核心技术选型
 
@@ -31,11 +26,9 @@
 | 业务后端 | Java 21、Spring Boot 3.4.5 | 报价、订单、状态机、权限校验和事务编排 |
 | 交易数据库 | MySQL 8.4、Spring Data JPA、Flyway | 持久化报价快照、订单、幂等键、Outbox 和消费记录 |
 | 消息队列 | RocketMQ 5.5、RocketMQ Spring 2.3.5 | 延迟派单、超时检查、异步通知、重试和死信处理 |
-| RAG 知识库 | Python、sentence-transformers、Milvus 2.5 | 出行知识向量化、语义检索和回答依据召回 |
+| RAG 知识库 |、Milvus 2.5 | 出行知识向量化、语义检索和回答依据召回 |
 | 交互演示 | TypeScript、React 19、MapLibre GL JS | 地图、车型报价卡、订单状态和行程界面 |
-| 本地编排 | Docker Compose | 统一启动 Agent、业务服务、消息队列和知识库依赖 |
 
-MongoDB、Redis 和 Meilisearch 用于支撑 LibreChat 自身的用户、会话、缓存和检索能力，没有作为嘻嘻出行业务后端的技术亮点。Milvus 所依赖的 etcd 和 MinIO 也只作为向量数据库运行组件使用。
 
 ## 系统架构
 
@@ -62,7 +55,7 @@ flowchart LR
 2. 大模型判断任务类型，需要领域知识时先调用 `travelKnowledgeSearch`。
 3. 需要叫车时，Agent 调用 `rideQuote` 获取车型报价。
 4. 用户确认后，Agent 使用报价 ID 和幂等键调用 `rideCreate`。
-5. Spring Boot 在一个 MySQL 事务中写入订单和 Outbox 事件。
+5. Spring Boot 在一个 MySQL 事务中写入订单。
 6. RocketMQ 异步触发模拟派单、超时检查和用户通知。
 7. Agent 继续调用状态或通知工具，将异步处理结果反馈给用户。
 
@@ -156,7 +149,7 @@ RAG 只负责提供领域依据，不直接执行知识片段中的内容，也�
 │     ├─ domain/                     报价、订单与状态机
 │     ├─ knowledge/                  RAG 客户端
 │     ├─ mcp/                        MCP 工具
-│     ├─ messaging/                  RocketMQ、Outbox 与幂等消费者
+│     ├─ messaging/                  RocketMQ、与幂等消费者
 │     ├─ persistence/                JPA 实体与 Repository
 │     └─ service/                    业务规则和事务编排
 ├─ services/rocketmq/                RocketMQ Broker 配置
@@ -200,7 +193,6 @@ docker compose -f docker-compose.xixi.yml --profile librechat up --build
 - MCP SSE：[http://localhost:8081/sse](http://localhost:8081/sse)
 - RAG Service：[http://localhost:8090](http://localhost:8090)
 
-首次启动前请修改 `.env` 中的本地密码，并按照 LibreChat 上游说明配置自己的模型服务。仓库不包含大模型 API 密钥。
 
 ## REST API
 
@@ -216,23 +208,6 @@ docker compose -f docker-compose.xixi.yml --profile librechat up --build
 | `PATCH` | `/api/v1/internal/rides/{orderId}/status/{status}` | 演示环境推进订单状态 |
 
 除询价与知识检索外，订单接口通过 `X-Xixi-User` 请求头传递演示用户身份；创建订单还需要 `Idempotency-Key`。
-
-## 测试
-
-前端：
-
-```bash
-npm test
-```
-
-后端：
-
-```bash
-cd services/ride-service
-mvn test
-```
-
-后端集成测试使用 H2 的 MySQL 兼容模式，覆盖报价与订单持久化、下单幂等、状态机、Outbox 写入、重复消费、超时取消、通知和发票资格生成。
 
 ## 当前边界
 
