@@ -106,4 +106,20 @@ public class RideOrderEntity {
                 status
         );
     }
+
+    public String getOrderId() {
+        return orderId;
+    }
+
+    public String getUserId() {
+        return userId;
+    }
+
+    public BigDecimal getPrice() {
+        return price;
+    }
+
+    public RideStatus getStatus() {
+        return status;
+    }
 }

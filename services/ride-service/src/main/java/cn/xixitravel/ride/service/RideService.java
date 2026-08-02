@@ -6,6 +6,9 @@ import cn.xixitravel.ride.domain.RideOrder;
 import cn.xixitravel.ride.domain.RideQuote;
 import cn.xixitravel.ride.domain.RideStatus;
 import cn.xixitravel.ride.domain.VehicleType;
+import cn.xixitravel.ride.messaging.RideEventType;
+import cn.xixitravel.ride.messaging.RideMessagingProperties;
+import cn.xixitravel.ride.messaging.RideOutboxService;
 import cn.xixitravel.ride.persistence.RideOrderEntity;
 import cn.xixitravel.ride.persistence.RideOrderRepository;
 import cn.xixitravel.ride.persistence.RideQuoteEntity;
@@ -35,17 +38,23 @@ public class RideService {
     private final Clock clock;
     private final RideQuoteRepository quoteRepository;
     private final RideOrderRepository orderRepository;
+    private final RideOutboxService outboxService;
+    private final RideMessagingProperties messagingProperties;
     private final TransactionTemplate transactionTemplate;
 
     public RideService(
             Clock clock,
             RideQuoteRepository quoteRepository,
             RideOrderRepository orderRepository,
+            RideOutboxService outboxService,
+            RideMessagingProperties messagingProperties,
             PlatformTransactionManager transactionManager
     ) {
         this.clock = clock;
         this.quoteRepository = quoteRepository;
         this.orderRepository = orderRepository;
+        this.outboxService = outboxService;
+        this.messagingProperties = messagingProperties;
         this.transactionTemplate = new TransactionTemplate(transactionManager);
     }
 
@@ -118,7 +127,18 @@ public class RideService {
                         requireText(request.destination(), "目的地", 255),
                         clock.instant()
                 );
-                return orderRepository.saveAndFlush(order).toDomain();
+                RideOrderEntity saved = orderRepository.saveAndFlush(order);
+                outboxService.append(
+                        saved,
+                        RideEventType.ORDER_CREATED,
+                        messagingProperties.getDispatchDelayLevel()
+                );
+                outboxService.append(
+                        saved,
+                        RideEventType.ORDER_TIMEOUT_CHECK,
+                        messagingProperties.getTimeoutDelayLevel()
+                );
+                return saved.toDomain();
             }));
         } catch (DataIntegrityViolationException exception) {
             return orderRepository
@@ -140,6 +160,7 @@ public class RideService {
         RideOrderEntity order = orderRepository.findOwnedForUpdate(orderId, userId)
                 .orElseThrow(() -> new RideNotFoundException(orderId));
         order.transitionTo(RideStatus.CANCELLED);
+        outboxService.append(order, RideEventType.ORDER_CANCELLED, 0);
         return order.toDomain();
     }
 
@@ -148,7 +169,17 @@ public class RideService {
         RideOrderEntity order = orderRepository.findForUpdate(orderId)
                 .orElseThrow(() -> new RideNotFoundException(orderId));
         order.transitionTo(status);
+        outboxService.append(order, eventTypeFor(status), 0);
         return order.toDomain();
+    }
+
+    private RideEventType eventTypeFor(RideStatus status) {
+        return switch (status) {
+            case DRIVER_ASSIGNED -> RideEventType.DRIVER_ASSIGNED;
+            case COMPLETED -> RideEventType.RIDE_COMPLETED;
+            case CANCELLED -> RideEventType.ORDER_CANCELLED;
+            default -> RideEventType.RIDE_STATUS_CHANGED;
+        };
     }
 
     private RideQuote requireValidQuote(String quoteId) {

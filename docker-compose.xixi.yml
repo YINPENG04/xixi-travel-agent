@@ -11,6 +11,11 @@ services:
       SPRING_DATASOURCE_URL: jdbc:mysql://mysql:3306/${MYSQL_DATABASE:-xixi}?useUnicode=true&characterEncoding=utf8&serverTimezone=UTC
       SPRING_DATASOURCE_USERNAME: ${MYSQL_USER:-xixi}
       SPRING_DATASOURCE_PASSWORD: ${MYSQL_PASSWORD:-xixi-local-only}
+      ROCKETMQ_NAME_SERVER: rocketmq-namesrv:9876
+      XIXI_MESSAGING_ENABLED: "true"
+      XIXI_RIDE_EVENT_TOPIC: ${XIXI_RIDE_EVENT_TOPIC:-xixi-ride-events}
+      XIXI_DISPATCH_DELAY_LEVEL: ${XIXI_DISPATCH_DELAY_LEVEL:-2}
+      XIXI_TIMEOUT_DELAY_LEVEL: ${XIXI_TIMEOUT_DELAY_LEVEL:-4}
     ports:
       - "8081:8081"
     healthcheck:
@@ -22,6 +27,8 @@ services:
       knowledge-service:
         condition: service_healthy
       mysql:
+        condition: service_healthy
+      rocketmq-broker:
         condition: service_healthy
 
   mongodb:
@@ -58,6 +65,40 @@ services:
     command: ["redis-server", "--appendonly", "yes"]
     volumes:
       - redis-data:/data
+
+  rocketmq-namesrv:
+    image: apache/rocketmq:5.5.0
+    restart: unless-stopped
+    command: ["sh", "mqnamesrv"]
+    ports:
+      - "9876:9876"
+    healthcheck:
+      test: ["CMD-SHELL", "bash -c 'echo > /dev/tcp/127.0.0.1/9876'"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+
+  rocketmq-broker:
+    image: apache/rocketmq:5.5.0
+    restart: unless-stopped
+    environment:
+      NAMESRV_ADDR: rocketmq-namesrv:9876
+      JAVA_OPT_EXT: -Xms512m -Xmx512m -Xmn256m
+    command: ["sh", "mqbroker", "-n", "rocketmq-namesrv:9876", "-c", "/home/rocketmq/broker.conf"]
+    ports:
+      - "10909:10909"
+      - "10911:10911"
+    volumes:
+      - rocketmq-store:/home/rocketmq/store
+      - ./services/rocketmq/broker.conf:/home/rocketmq/broker.conf:ro
+    depends_on:
+      rocketmq-namesrv:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "sh mqadmin clusterList -n rocketmq-namesrv:9876 | grep broker-a"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
 
   etcd:
     image: quay.io/coreos/etcd:v3.5.18
@@ -176,6 +217,7 @@ volumes:
   mongodb-data:
   mysql-data:
   redis-data:
+  rocketmq-store:
   etcd-data:
   minio-data:
   milvus-data:

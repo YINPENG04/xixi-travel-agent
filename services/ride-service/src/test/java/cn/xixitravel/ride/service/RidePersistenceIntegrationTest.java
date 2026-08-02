@@ -52,6 +52,11 @@ class RidePersistenceIntegrationTest {
                 userId,
                 idempotencyKey
         )).isEqualTo(1);
+        assertThat(jdbcTemplate.queryForObject(
+                "select count(*) from ride_outbox_events where aggregate_id = ?",
+                Integer.class,
+                first.getOrderId()
+        )).isEqualTo(2);
     }
 
     @Test

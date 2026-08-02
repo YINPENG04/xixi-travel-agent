@@ -3,6 +3,9 @@ package cn.xixitravel.ride.api;
 import cn.xixitravel.ride.domain.RideOrder;
 import cn.xixitravel.ride.domain.RideQuote;
 import cn.xixitravel.ride.domain.RideStatus;
+import cn.xixitravel.ride.messaging.RideAsyncQueryService;
+import cn.xixitravel.ride.messaging.RideInvoiceEligibility;
+import cn.xixitravel.ride.messaging.RideNotification;
 import cn.xixitravel.ride.service.RideService;
 import jakarta.validation.Valid;
 import org.springframework.http.HttpStatus;
@@ -22,9 +25,11 @@ import java.util.List;
 @RequestMapping("/api/v1")
 public class RideController {
     private final RideService rideService;
+    private final RideAsyncQueryService asyncQueryService;
 
-    public RideController(RideService rideService) {
+    public RideController(RideService rideService, RideAsyncQueryService asyncQueryService) {
         this.rideService = rideService;
+        this.asyncQueryService = asyncQueryService;
     }
 
     @PostMapping("/quotes")
@@ -48,6 +53,22 @@ public class RideController {
             @PathVariable String orderId
     ) {
         return rideService.getRide(userId, orderId);
+    }
+
+    @GetMapping("/rides/{orderId}/notifications")
+    public List<RideNotification> notifications(
+            @RequestHeader(value = "X-Xixi-User", defaultValue = "demo-user") String userId,
+            @PathVariable String orderId
+    ) {
+        return asyncQueryService.notifications(userId, orderId);
+    }
+
+    @GetMapping("/rides/{orderId}/invoice-eligibility")
+    public RideInvoiceEligibility invoiceEligibility(
+            @RequestHeader(value = "X-Xixi-User", defaultValue = "demo-user") String userId,
+            @PathVariable String orderId
+    ) {
+        return asyncQueryService.invoiceEligibility(userId, orderId);
     }
 
     @PostMapping("/rides/{orderId}/cancel")

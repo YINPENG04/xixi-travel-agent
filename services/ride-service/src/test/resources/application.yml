@@ -14,3 +14,12 @@ spring:
           time_zone: UTC
   flyway:
     enabled: true
+
+xixi:
+  messaging:
+    enabled: false
+
+rocketmq:
+  name-server: localhost:9876
+  producer:
+    group: xixi-ride-test-producer

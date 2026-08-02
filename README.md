@@ -2,7 +2,7 @@
 
 一句话，轻松出发。
 
-嘻嘻出行是一个面向打车、路线规划和行程服务场景的智能出行 Agent 开源项目。项目包含可独立运行的 React/MapLibre 演示界面、基于 LibreChat 的 Agent 入口、Spring Boot 出行业务服务、MySQL 交易持久化、Spring AI MCP 工具，以及基于 sentence-transformers 与 Milvus 的 RAG 知识检索链路。
+嘻嘻出行是一个面向打车、路线规划和行程服务场景的智能出行 Agent 开源项目。项目包含可独立运行的 React/MapLibre 演示界面、基于 LibreChat 的 Agent 入口、Spring Boot 出行业务服务、MySQL 交易持久化、RocketMQ 订单事件链路、Spring AI MCP 工具，以及基于 sentence-transformers 与 Milvus 的 RAG 知识检索链路。
 
 
 ![嘻嘻出行界面](./public/og.png)
@@ -34,7 +34,7 @@
 本仓库同时提供两种使用方式：
 
 1. **前端交互演示**：直接运行 `app/`，无需数据库、模型密钥或后端服务，即可体验地图、车型报价、叫车、司机倒计时、行程和发票页面。
-2. **完整 Agent 链路**：启动 LibreChat、Spring Boot 和知识服务，由大模型通过 MCP 自主调用知识检索、询价、创建订单、查询状态和取消订单等工具。
+2. **完整 Agent 链路**：启动 LibreChat、Spring Boot、RocketMQ 和知识服务，由大模型通过 MCP 自主调用知识检索、询价、创建订单、查询状态和取消订单等工具；订单事件异步触发模拟派单、通知和发票资格处理。
 
 两条路径目前彼此独立。在线演示界面的报价、路线和司机信息是前端演示数据，尚未直接调用 `ride-service`；真实业务规则和 MCP 工具位于 Spring Boot 服务中。
 
@@ -86,6 +86,7 @@ flowchart LR
     subgraph Infra["可选本地基础设施"]
         MONGO["MongoDB<br/>LibreChat 数据"]
         REDIS["Redis<br/>缓存基础设施"]
+        RMQ["RocketMQ 5.5<br/>订单事件总线"]
         MEILI["Meilisearch<br/>全文检索"]
         MILVUS["Milvus<br/>向量知识库"]
         ETCD["etcd"]
@@ -108,6 +109,8 @@ flowchart LR
     LC --> REDIS
     LC --> MEILI
     RS -. 后续接入 .-> REDIS
+    RS -->|"Outbox 发布"| RMQ
+    RMQ -->|"派单、通知、发票消费"| RS
 ```
 
 ## 分层说明
@@ -156,6 +159,8 @@ Spring AI 将 Java 方法注册为 MCP 工具：
 | `rideCreate` | 使用有效报价创建订单 | 需要用户 ID、幂等键和用户确认 |
 | `rideStatus` | 查询当前订单状态 | 按用户 ID 隔离订单 |
 | `rideCancel` | 取消尚未开始的订单 | 调用前需要用户确认 |
+| `rideNotifications` | 查询异步派单、取消和完成通知 | 按用户 ID 校验订单归属 |
+| `rideInvoiceEligibility` | 查询已完成行程的发票资格 | 只有完成事件被消费后才可开票 |
 
 MCP Server 使用同步工具模式，通过 SSE 对 LibreChat 提供能力。Agent 根据问题类型选择知识检索或交易工具；创建和取消订单前需要确认的要求目前写在 Agent/MCP 工具说明中，业务接口尚未通过独立的确认令牌强制校验。
 
@@ -163,7 +168,7 @@ MCP Server 使用同步工具模式，通过 SSE 对 LibreChat 提供能力。Ag
 
 路径：`services/ride-service/`
 
-技术栈：Java 21、Spring Boot 3.4.5、Spring Data JPA、Flyway、MySQL 8.4、Spring AI 1.0.1。
+技术栈：Java 21、Spring Boot 3.4.5、Spring Data JPA、Flyway、MySQL 8.4、RocketMQ 5.5、RocketMQ Spring 2.3.5、Spring AI 1.0.1。
 
 核心规则：
 
@@ -174,10 +179,12 @@ MCP Server 使用同步工具模式，通过 SSE 对 LibreChat 提供能力。Ag
 - 查询和取消订单时校验订单所属用户。
 - 状态更新使用数据库悲观行锁，并通过版本字段检测并发覆盖。
 - Flyway 负责创建和演进报价、订单表结构。
+- 订单变更与 Outbox 事件在同一个 MySQL 事务中提交。
+- RocketMQ 消费者使用事件 ID 去重，重复投递不会重复派单或生成发票资格。
 - 非法状态迁移会被拒绝。
 - 参数错误和业务错误以 RFC 9457 `ProblemDetail` 返回。
 
-报价快照、订单、订单状态和幂等键已持久化到 MySQL，服务重启后仍可查询。Redis 当前由 LibreChat 使用，业务侧尚未将报价 TTL 和短期状态缓存接入 Redis。
+报价快照、订单、订单状态、幂等键、Outbox 事件、异步通知和发票资格已持久化到 MySQL，服务重启后仍可查询。Redis 当前由 LibreChat 使用，业务侧尚未将报价 TTL 和短期状态缓存接入 Redis。
 
 ### 5. 订单状态机
 
@@ -201,7 +208,20 @@ stateDiagram-v2
 
 `COMPLETED` 和 `CANCELLED` 是终态，行程开始后不能通过现有接口取消。
 
-### 6. 知识库层
+### 6. 订单事件驱动层
+
+路径：`services/ride-service/src/main/java/cn/xixitravel/ride/messaging/`
+
+- `rideCreate` 在订单事务中同时写入 `ORDER_CREATED` 和延迟的 `ORDER_TIMEOUT_CHECK` Outbox 事件。
+- Outbox 发布器按 `orderId` 顺序发送即时事件；发送成功后标记为 `PUBLISHED`，失败则指数退避重试，连续失败十次后标记为 `FAILED`。
+- 派单消费者延迟处理 `ORDER_CREATED`，仅当订单仍为 `CREATED` 时推进到 `DRIVER_ASSIGNED`。
+- 超时消费者收到延迟检查消息时，仅取消仍未派单的订单；已接单或已取消订单不会被重复修改。
+- 通知和发票消费者分别持久化用户可查询的通知及发票资格。
+- 每个消费者以“消费者组 + 事件 ID”记录处理结果，Broker 重投时能够幂等返回；未成功处理的消息由 RocketMQ 按配置重试，超过次数进入死信队列。
+
+该链路使用 Transactional Outbox 解决“订单已提交但消息未发送”的双写一致性问题；如果消息发送成功后更新 Outbox 状态失败，RocketMQ 可能收到重复消息，由消费者幂等表兜底。
+
+### 7. 知识库层
 
 路径：`knowledge/`
 
@@ -219,7 +239,7 @@ Spring Boot 将检索能力同时暴露为 REST API 和 `travelKnowledgeSearch` 
 
 初始化脚本默认按主键更新或插入知识数据；设置 `XIXI_RECREATE_COLLECTION=true` 时会先删除并重建 `xixi_travel_knowledge` 集合。该方式适合初始化和演示，不适合直接用于保存人工维护的生产数据。知识片段属于回答依据，不应被当作可执行指令。
 
-### 7. 基础设施层
+### 8. 基础设施层
 
 `docker-compose.xixi.yml` 提供以下容器：
 
@@ -230,6 +250,8 @@ Spring Boot 将检索能力同时暴露为 REST API 和 `travelKnowledgeSearch` 
 | `meilisearch` | LibreChat 全文检索 | LibreChat 模式使用 |
 | `redis` | LibreChat 缓存；计划承载业务短期缓存和限流 | 部分接入 |
 | `mysql` | 保存报价快照、订单、状态和幂等键 | Spring Data JPA 已接入 |
+| `rocketmq-namesrv` | RocketMQ 路由发现 | 订单事件链路使用 |
+| `rocketmq-broker` | 顺序消息、延迟消息、重试和死信队列 | 订单事件链路已接入 |
 | `knowledge-init` | 生成向量并初始化知识集合 | 首次启动时自动执行 |
 | `knowledge-service` | 问题向量化、相似度检索和结果过滤 | REST 与 MCP 已接入 |
 | `milvus` | 保存和检索知识向量 | RAG 链路已接入 |
@@ -238,7 +260,7 @@ Spring Boot 将检索能力同时暴露为 REST API 和 `travelKnowledgeSearch` 
 
 根目录的 `db/`、`drizzle/` 和 `examples/d1/` 是站点运行环境预留的 D1/Drizzle 脚手架，当前嘻嘻出行业务没有使用 D1。
 
-## 三条关键数据流
+## 四条关键数据流
 
 ### 前端演示数据流
 
@@ -256,8 +278,17 @@ Spring Boot 将检索能力同时暴露为 REST API 和 `travelKnowledgeSearch` 
 2. 大模型理解出发地、目的地、里程和预计时间。
 3. Agent 调用 `rideQuote` 获得三类车型报价。
 4. 用户明确确认后，Agent 使用报价 ID 和幂等键调用 `rideCreate`。
-5. Agent 使用 `rideStatus` 查询状态，或在确认后调用 `rideCancel`。
-6. Spring Boot 通过 MySQL 事务、唯一索引和行锁保证报价有效期、用户隔离、幂等和状态迁移。
+5. Spring Boot 在订单事务中同时写入 RocketMQ Outbox 事件。
+6. RocketMQ 异步触发模拟派单；Agent 使用 `rideStatus` 和 `rideNotifications` 查询最新状态与通知，或在确认后调用 `rideCancel`。
+7. Spring Boot 通过 MySQL 事务、唯一索引、行锁和消费幂等记录保证报价有效期、用户隔离、幂等和状态迁移。
+
+### RocketMQ 订单事件数据流
+
+1. 订单与 Outbox 事件在同一个 MySQL 事务中提交。
+2. 定时发布器锁定待发送事件，按 `orderId` 将即时事件顺序发送到 `xixi-ride-events`，并使用 RocketMQ 延迟等级发送派单和超时检查事件。
+3. `xixi-dispatch-consumer` 异步推进派单状态，`xixi-notification-consumer` 生成用户通知，`xixi-invoice-consumer` 在行程完成后生成发票资格。
+4. 消费者先写入唯一消费记录，再处理领域状态；事务失败时记录与业务变更一同回滚，RocketMQ 可以安全重试。
+5. Agent 可通过新增 MCP 工具查询异步处理结果。
 
 ### RAG 知识问答数据流
 
@@ -282,6 +313,7 @@ Spring Boot 将检索能力同时暴露为 REST API 和 `travelKnowledgeSearch` 
 │  ├─ src/main/java/.../domain/  报价、订单、车型和状态机
 │  ├─ src/main/java/.../knowledge/ RAG 检索客户端与返回模型
 │  ├─ src/main/java/.../mcp/     Spring AI MCP 工具
+│  ├─ src/main/java/.../messaging/ RocketMQ、Outbox 与幂等消费者
 │  ├─ src/main/java/.../persistence/ JPA 实体与 MySQL Repository
 │  ├─ src/main/java/.../service/ 业务规则和事务编排
 │  └─ src/main/resources/db/     Flyway 数据库迁移
@@ -289,6 +321,7 @@ Spring Boot 将检索能力同时暴露为 REST API 和 `travelKnowledgeSearch` 
 │  ├─ rag_service.py             FastAPI 语义检索服务
 │  ├─ seed_milvus.py             知识向量化与集合初始化
 │  └─ data/                      JSONL 知识数据
+├─ services/rocketmq/            RocketMQ 本地 Broker 配置
 ├─ scripts/                      LibreChat 固定基线检出脚本
 ├─ tests/                        前端构建产物测试
 ├─ worker/                       Vinext/Cloudflare Worker 入口
@@ -340,7 +373,7 @@ mvn spring-boot:run
 - MCP SSE：`http://localhost:8081/sse`
 - 健康检查：`http://localhost:8081/actuator/health`
 
-默认连接 `localhost:3306/xixi`。启动时 Flyway 会自动执行 `db/migration/` 中的脚本，Hibernate 随后校验实体与数据库结构是否一致。
+默认连接 `localhost:3306/xixi`。启动时 Flyway 会自动执行 `db/migration/` 中的脚本，Hibernate 随后校验实体与数据库结构是否一致。只运行 Spring Boot 时 RocketMQ 默认关闭，订单事件会保存在 Outbox；通过完整 Compose 启动时会自动启用消息发布和消费。
 
 ### 模式 C：启动基础设施
 
@@ -438,6 +471,11 @@ uvicorn knowledge.rag_service:app --host 0.0.0.0 --port 8090
 | `MYSQL_USER` | `xixi` | MySQL 业务账号 |
 | `MYSQL_PASSWORD` | `xixi-local-only` | MySQL 业务账号密码 |
 | `MYSQL_ROOT_PASSWORD` | `xixi-root-local-only` | MySQL root 密码，仅用于本地初始化 |
+| `ROCKETMQ_NAME_SERVER` | `localhost:9876` | RocketMQ NameServer 地址 |
+| `XIXI_MESSAGING_ENABLED` | `false` | 是否启用 Outbox 发布器和 RocketMQ 消费者；Compose 中为 `true` |
+| `XIXI_RIDE_EVENT_TOPIC` | `xixi-ride-events` | 订单事件 Topic |
+| `XIXI_DISPATCH_DELAY_LEVEL` | `2` | 模拟派单延迟等级，默认约 5 秒 |
+| `XIXI_TIMEOUT_DELAY_LEVEL` | `4` | 未派单超时检查延迟等级，默认约 30 秒 |
 | `MILVUS_HOST` | `localhost` | Milvus 地址 |
 | `MILVUS_PORT` | `19530` | Milvus 端口 |
 | `XIXI_MILVUS_COLLECTION` | `xixi_travel_knowledge` | 集合名称 |
@@ -454,6 +492,8 @@ uvicorn knowledge.rag_service:app --host 0.0.0.0 --port 8090
 | `POST` | `/api/v1/quotes` | 根据路线里程和时长生成车型报价 |
 | `POST` | `/api/v1/rides` | 使用有效报价创建订单 |
 | `GET` | `/api/v1/rides/{orderId}` | 查询当前用户的订单 |
+| `GET` | `/api/v1/rides/{orderId}/notifications` | 查询 RocketMQ 消费产生的订单通知 |
+| `GET` | `/api/v1/rides/{orderId}/invoice-eligibility` | 查询完成事件产生的发票资格 |
 | `POST` | `/api/v1/rides/{orderId}/cancel` | 取消允许取消的订单 |
 | `PATCH` | `/api/v1/internal/rides/{orderId}/status/{status}` | 演示用内部状态推进接口 |
 
@@ -510,13 +550,13 @@ mvn test
 
 仓库同时保留 Vinext/Cloudflare Worker 构建方式。`worker/index.ts` 是 Worker 入口，`build/sites-vite-plugin.ts` 在构建结束后打包站点元数据。
 
-完整 Agent 链路包含 MongoDB、MySQL、Redis、Meilisearch、Spring Boot、Milvus、etcd 和 MinIO，不等同于单页演示站点，需要使用 Docker Compose 或等价基础设施单独部署。
+完整 Agent 链路包含 MongoDB、MySQL、Redis、RocketMQ NameServer/Broker、Meilisearch、Spring Boot、Milvus、etcd 和 MinIO，不等同于单页演示站点，需要使用 Docker Compose 或等价基础设施单独部署。
 
 ## 当前边界与生产化注意事项
 
 - 当前系统是 MVP，不包含真实车辆调度、支付、短信、实名认证、定位上报或生产级风控。
 - 前端演示界面尚未调用 Spring Boot REST/MCP 服务。
-- MySQL 已保存报价和订单，但尚未持久化前端演示中的发票、司机定位和真实行程轨迹。
+- MySQL 已保存报价、订单、异步通知和发票资格，但尚未实现真实司机分配、发票开具、定位和行程轨迹。
 - `X-Xixi-User` 是演示身份头，不是生产级认证机制。
 - 内部状态推进接口当前没有独立鉴权，只适合受控演示环境。
 - Agent 的“创建或取消前确认”主要依靠工具描述和编排规则，后端尚未强制验证确认凭证。
@@ -525,11 +565,12 @@ mvn test
 - `librechat.xixi.yaml` 中的隐私政策和服务条款地址是占位地址，公开部署前必须替换。
 - 公共 OpenStreetMap 瓦片服务不应被当作无配额、无保障的商业地图 CDN。
 - 生产化时应完善 MySQL 备份、只读副本、慢查询监控和数据归档，并将报价缓存、限流和短期状态接入 Redis 或兼容组件。
+- 当前 RocketMQ 使用单 NameServer、单 Broker 演示编排；生产环境需要多副本、高可用、监控告警、积压治理和死信补偿流程。
 
 ## 建议演进路线
 
 1. 将前端报价、下单和行程页面接入 Spring Boot REST API。
-2. 在 MySQL 中补充行程轨迹、司机分配、发票和审计日志仓储。
+2. 在 MySQL 中补充真实司机分配、完整发票和行程轨迹仓储。
 3. 使用 Redis 或 Valkey 实现报价缓存、限流和短期状态。
 4. 增加标准登录鉴权，将用户身份安全传递给 REST 和 MCP 工具。
 5. 为 RAG 增加混合检索、重排序、知识版本管理和可视化引用。
