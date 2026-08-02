@@ -1,5 +1,6 @@
 package cn.xixitravel.ride.mcp;
 
+import cn.xixitravel.ride.knowledge.KnowledgeSearchService;
 import cn.xixitravel.ride.service.RideService;
 import org.springframework.ai.tool.ToolCallbackProvider;
 import org.springframework.ai.tool.method.MethodToolCallbackProvider;
@@ -10,9 +11,12 @@ import org.springframework.context.annotation.Configuration;
 public class McpToolConfiguration {
 
     @Bean
-    ToolCallbackProvider xixiRideTools(RideService rideService) {
+    ToolCallbackProvider xixiRideTools(
+            RideService rideService,
+            KnowledgeSearchService knowledgeSearchService
+    ) {
         return MethodToolCallbackProvider.builder()
-                .toolObjects(new RideTools(rideService))
+                .toolObjects(new RideTools(rideService, knowledgeSearchService))
                 .build();
     }
 }

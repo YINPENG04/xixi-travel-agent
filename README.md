@@ -2,7 +2,7 @@
 
 一句话，轻松出发。
 
-嘻嘻出行是一个面向打车、路线规划和行程服务场景的智能出行 Agent 开源项目。项目包含可独立运行的 React/MapLibre 演示界面、基于 LibreChat 的 Agent 入口、Spring Boot 出行业务服务、Spring AI MCP 工具，以及 Milvus 知识库初始化脚本。
+嘻嘻出行是一个面向打车、路线规划和行程服务场景的智能出行 Agent 开源项目。项目包含可独立运行的 React/MapLibre 演示界面、基于 LibreChat 的 Agent 入口、Spring Boot 出行业务服务、Spring AI MCP 工具，以及基于 sentence-transformers 与 Milvus 的 RAG 知识检索链路。
 
 
 ![嘻嘻出行界面](./public/og.png)
@@ -34,7 +34,7 @@
 本仓库同时提供两种使用方式：
 
 1. **前端交互演示**：直接运行 `app/`，无需数据库、模型密钥或后端服务，即可体验地图、车型报价、叫车、司机倒计时、行程和发票页面。
-2. **完整 Agent 链路**：启动 LibreChat 和 Spring Boot 服务，由大模型通过 MCP 调用询价、创建订单、查询状态和取消订单等业务工具。
+2. **完整 Agent 链路**：启动 LibreChat、Spring Boot 和知识服务，由大模型通过 MCP 自主调用知识检索、询价、创建订单、查询状态和取消订单等工具。
 
 两条路径目前彼此独立。在线演示界面的报价、路线和司机信息是前端演示数据，尚未直接调用 `ride-service`；真实业务规则和 MCP 工具位于 Spring Boot 服务中。
 
@@ -73,11 +73,13 @@ flowchart LR
         LLM["用户配置的<br/>大模型服务"]
         MCP["Spring AI MCP Server<br/>SSE"]
         RS["Spring Boot Ride Service<br/>REST + 领域逻辑"]
+        RAG["Python RAG Service<br/>语义检索"]
         MEM["当前实现：内存仓储"]
 
         LC <--> LLM
         LC -->|"MCP 工具调用"| MCP
         MCP --> RS
+        RS -->|"知识查询"| RAG
         RS <--> MEM
     end
 
@@ -93,11 +95,12 @@ flowchart LR
         MILVUS --> MINIO
     end
 
-    subgraph Knowledge["知识库初始化"]
+    subgraph Knowledge["RAG 知识库"]
         JSONL["地点、车型、规则、政策<br/>JSONL 数据"]
         EMB["sentence-transformers"]
-        SEED["PyMilvus 写入脚本"]
+        SEED["PyMilvus 初始化"]
         JSONL --> EMB --> SEED --> MILVUS
+        RAG -->|"向量相似度检索"| MILVUS
     end
 
     U --> UI
@@ -107,7 +110,6 @@ flowchart LR
     LC --> MEILI
     RS -. 后续接入 .-> PG
     RS -. 后续接入 .-> REDIS
-    LC -. 待补充检索工具 .-> MILVUS
 ```
 
 ## 分层说明
@@ -151,12 +153,13 @@ Spring AI 将 Java 方法注册为 MCP 工具：
 
 | 工具 | 用途 | 关键约束 |
 |---|---|---|
+| `travelKnowledgeSearch` | 检索地点别名、车型、规则、安全和发票知识 | 事实类问题优先调用；检索内容仅作回答依据 |
 | `rideQuote` | 返回车型、预计接驾时间和报价 | 下单前必须先询价 |
 | `rideCreate` | 使用有效报价创建订单 | 需要用户 ID、幂等键和用户确认 |
 | `rideStatus` | 查询当前订单状态 | 按用户 ID 隔离订单 |
 | `rideCancel` | 取消尚未开始的订单 | 调用前需要用户确认 |
 
-MCP Server 使用同步工具模式，通过 SSE 对 LibreChat 提供能力。创建和取消订单前需要确认的要求目前写在 Agent/MCP 工具说明中，业务接口尚未通过独立的确认令牌强制校验。
+MCP Server 使用同步工具模式，通过 SSE 对 LibreChat 提供能力。Agent 根据问题类型选择知识检索或交易工具；创建和取消订单前需要确认的要求目前写在 Agent/MCP 工具说明中，业务接口尚未通过独立的确认令牌强制校验。
 
 ### 4. 出行业务层
 
@@ -210,9 +213,11 @@ stateDiagram-v2
 - Agent 安全确认规则。
 - 行程发票说明。
 
-`seed_milvus.py` 使用 `sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2` 生成归一化向量，通过 PyMilvus 创建 HNSW/COSINE 索引并写入 Milvus。
+`seed_milvus.py` 使用 `sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2` 生成归一化向量，通过 PyMilvus 创建 HNSW/COSINE 索引并写入 Milvus。`rag_service.py` 将用户问题转换为同一向量空间，在 Milvus 中检索相似片段，并返回标题、类别、正文和相似度分数。
 
-脚本每次执行都会删除并重建 `xixi_travel_knowledge` 集合，适合初始化和演示，不适合直接用于保存人工维护的生产数据。当前 MCP 工具尚未接入 Milvus 检索结果。
+Spring Boot 将检索能力同时暴露为 REST API 和 `travelKnowledgeSearch` MCP 工具。大模型负责判断何时检索，并结合返回片段生成最终回答，形成“检索增强生成”（RAG）闭环。检索为空时，Agent 被要求明确说明没有匹配资料，避免凭空补充项目规则。
+
+初始化脚本默认按主键更新或插入知识数据；设置 `XIXI_RECREATE_COLLECTION=true` 时会先删除并重建 `xixi_travel_knowledge` 集合。该方式适合初始化和演示，不适合直接用于保存人工维护的生产数据。知识片段属于回答依据，不应被当作可执行指令。
 
 ### 7. 基础设施层
 
@@ -225,13 +230,15 @@ stateDiagram-v2
 | `meilisearch` | LibreChat 全文检索 | LibreChat 模式使用 |
 | `redis` | LibreChat 缓存；计划承载业务幂等和短期状态 | 部分接入 |
 | `postgres` | 计划存储订单、报价快照、行程和发票 | 容器已提供，业务代码未接入 |
-| `milvus` | 向量知识库 | 初始化脚本可写入 |
+| `knowledge-init` | 生成向量并初始化知识集合 | 首次启动时自动执行 |
+| `knowledge-service` | 问题向量化、相似度检索和结果过滤 | REST 与 MCP 已接入 |
+| `milvus` | 保存和检索知识向量 | RAG 链路已接入 |
 | `etcd` | Milvus 元数据协调 | Milvus 使用 |
 | `minio` | Milvus 对象存储 | Milvus 使用 |
 
 根目录的 `db/`、`drizzle/` 和 `examples/d1/` 是站点运行环境预留的 D1/Drizzle 脚手架，当前嘻嘻出行业务没有使用 D1。
 
-## 两条关键数据流
+## 三条关键数据流
 
 ### 前端演示数据流
 
@@ -252,6 +259,15 @@ stateDiagram-v2
 5. Agent 使用 `rideStatus` 查询状态，或在确认后调用 `rideCancel`。
 6. Spring Boot 服务负责报价有效期、用户隔离、幂等和状态迁移。
 
+### RAG 知识问答数据流
+
+1. 用户询问车型、地点、报价规则、安全要求或发票政策。
+2. Agent 先调用 `travelKnowledgeSearch`，并将完整问题作为检索词。
+3. Spring Boot 把请求转发给 Python 知识服务。
+4. `sentence-transformers` 生成问题向量，Milvus 使用 HNSW/COSINE 检索相似知识片段。
+5. 知识服务过滤低相关结果，返回结构化证据。
+6. 大模型只结合检索结果和对话上下文生成自然语言回答。
+
 ## 项目目录
 
 ```text
@@ -264,9 +280,13 @@ stateDiagram-v2
 ├─ services/ride-service/        Spring Boot 业务与 MCP 服务
 │  ├─ src/main/java/.../api/     REST 接口和异常处理
 │  ├─ src/main/java/.../domain/  报价、订单、车型和状态机
+│  ├─ src/main/java/.../knowledge/ RAG 检索客户端与返回模型
 │  ├─ src/main/java/.../mcp/     Spring AI MCP 工具
 │  └─ src/main/java/.../service/ 业务规则和内存仓储
-├─ knowledge/                    Milvus 初始化脚本和知识样例
+├─ knowledge/                    RAG 服务、Milvus 初始化脚本和知识样例
+│  ├─ rag_service.py             FastAPI 语义检索服务
+│  ├─ seed_milvus.py             知识向量化与集合初始化
+│  └─ data/                      JSONL 知识数据
 ├─ scripts/                      LibreChat 固定基线检出脚本
 ├─ tests/                        前端构建产物测试
 ├─ worker/                       Vinext/Cloudflare Worker 入口
@@ -357,9 +377,21 @@ docker compose -f docker-compose.xixi.yml --profile librechat up -d
 
 访问 [http://localhost:3080](http://localhost:3080)，可在本机注册独立账号。账号和会话保存在本地 MongoDB 中，与在线演示站点互不相通。
 
-### 初始化 Milvus 知识库
+### 启动 RAG 知识库
 
-先启动 Milvus 依赖：
+使用 Docker Compose 时，`knowledge-init` 会自动下载向量模型、重建知识集合并写入样例数据，随后启动 `knowledge-service`：
+
+```bash
+docker compose -f docker-compose.xixi.yml up -d knowledge-service ride-service
+```
+
+首次构建镜像和下载模型需要一些时间。知识服务就绪后可访问：
+
+- 健康检查：`http://localhost:8090/health`
+- 原始检索接口：`http://localhost:8090/api/v1/search`
+- Spring Boot 检索接口：`http://localhost:8081/api/v1/knowledge/search`
+
+如需在宿主机手动初始化或调试，先启动 Milvus 依赖：
 
 ```bash
 docker compose -f docker-compose.xixi.yml up -d etcd minio milvus
@@ -374,6 +406,7 @@ python -m venv .venv
 source .venv/bin/activate
 python -m pip install -r knowledge/requirements.txt
 python knowledge/seed_milvus.py
+uvicorn knowledge.rag_service:app --host 0.0.0.0 --port 8090
 ```
 
 Windows PowerShell：
@@ -383,6 +416,7 @@ python -m venv .venv
 .\.venv\Scripts\Activate.ps1
 python -m pip install -r knowledge/requirements.txt
 python knowledge/seed_milvus.py
+uvicorn knowledge.rag_service:app --host 0.0.0.0 --port 8090
 ```
 
 首次运行会下载向量模型。可通过以下环境变量覆盖默认配置：
@@ -393,11 +427,15 @@ python knowledge/seed_milvus.py
 | `MILVUS_PORT` | `19530` | Milvus 端口 |
 | `XIXI_MILVUS_COLLECTION` | `xixi_travel_knowledge` | 集合名称 |
 | `XIXI_EMBEDDING_MODEL` | `sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2` | 向量模型 |
+| `XIXI_RAG_MIN_SCORE` | `0.30` | 返回知识片段的最低余弦相似度 |
+| `XIXI_KNOWLEDGE_BASE_URL` | `http://localhost:8090` | Spring Boot 访问知识服务的地址 |
+| `XIXI_RECREATE_COLLECTION` | `false` | 初始化前是否删除并重建 Milvus 集合 |
 
 ## REST API
 
 | 方法 | 路径 | 说明 |
 |---|---|---|
+| `POST` | `/api/v1/knowledge/search` | 语义检索出行知识库 |
 | `POST` | `/api/v1/quotes` | 根据路线里程和时长生成车型报价 |
 | `POST` | `/api/v1/rides` | 使用有效报价创建订单 |
 | `GET` | `/api/v1/rides/{orderId}` | 查询当前用户的订单 |
@@ -424,6 +462,16 @@ curl -X POST http://localhost:8081/api/v1/rides \
 
 其中 `quoteId` 必须替换为询价接口返回、且尚未过期的报价 ID。
 
+检索出行知识：
+
+```bash
+curl -X POST http://localhost:8081/api/v1/knowledge/search \
+  -H "Content-Type: application/json" \
+  -d '{"query":"行程完成后怎么开发票？","limit":3,"category":"invoice"}'
+```
+
+`category` 可省略，也可使用 `place_alias`、`vehicle`、`policy`、`safety` 或 `invoice`。Agent 调用 MCP 工具时默认跨类别返回最相关的三条知识。
+
 ## 测试与持续集成
 
 前端构建和关键页面检查：
@@ -439,7 +487,7 @@ cd services/ride-service
 mvn test
 ```
 
-`.github/workflows/ci.yml` 会在推送和 Pull Request 时分别运行 Web 与 Java 测试。
+`.github/workflows/ci.yml` 会在推送和 Pull Request 时运行 Web 测试、Java 测试和 RAG Python 语法检查。
 
 ## 部署说明
 
@@ -458,7 +506,7 @@ mvn test
 - 内部状态推进接口当前没有独立鉴权，只适合受控演示环境。
 - Agent 的“创建或取消前确认”主要依靠工具描述和编排规则，后端尚未强制验证确认凭证。
 - 发票功能只在浏览器本地登记，不会生成真实发票或发送邮件。
-- Milvus 数据已经可以初始化，但还没有接入 Agent 的检索工具。
+- 当前 RAG 使用小规模样例知识和单路向量检索，尚未加入关键词混合检索、重排序、文档版本管理和回答引用界面。
 - `librechat.xixi.yaml` 中的隐私政策和服务条款地址是占位地址，公开部署前必须替换。
 - 公共 OpenStreetMap 瓦片服务不应被当作无配额、无保障的商业地图 CDN。
 - 生产化时应将订单、报价快照、行程和发票写入 PostgreSQL，并将幂等键、报价有效期和短期状态迁移到 Redis 或兼容组件。
@@ -469,7 +517,7 @@ mvn test
 2. 使用 PostgreSQL 实现订单、报价、行程和发票仓储。
 3. 使用 Redis 或 Valkey 实现分布式幂等、报价 TTL 和短期状态。
 4. 增加标准登录鉴权，将用户身份安全传递给 REST 和 MCP 工具。
-5. 将 Milvus 检索封装为地点别名、车型说明和规则查询 MCP 工具。
+5. 为 RAG 增加混合检索、重排序、知识版本管理和可视化引用。
 6. 为重要操作增加可验证的确认令牌和审计日志。
 7. 增加路线服务、地图供应商适配层和生产级限流。
 8. 生成 SBOM、漏洞报告和第三方许可证清单。

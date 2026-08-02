@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import os
+import time
 from pathlib import Path
 
 from pymilvus import Collection, CollectionSchema, DataType, FieldSchema, connections, utility
@@ -18,6 +19,11 @@ MODEL_NAME = os.getenv(
     "sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2",
 )
 DATA_PATH = Path(__file__).parent / "data" / "xixi_knowledge.jsonl"
+CONNECT_ATTEMPTS = int(os.getenv("XIXI_MILVUS_CONNECT_ATTEMPTS", "30"))
+CONNECT_INTERVAL_SECONDS = float(
+    os.getenv("XIXI_MILVUS_CONNECT_INTERVAL_SECONDS", "2")
+)
+RECREATE_COLLECTION = os.getenv("XIXI_RECREATE_COLLECTION", "false").lower() == "true"
 
 
 def load_documents() -> list[dict]:
@@ -25,9 +31,12 @@ def load_documents() -> list[dict]:
         return [json.loads(line) for line in source if line.strip()]
 
 
-def recreate_collection(dimension: int) -> Collection:
-    if utility.has_collection(COLLECTION_NAME):
+def prepare_collection(dimension: int) -> Collection:
+    if utility.has_collection(COLLECTION_NAME) and RECREATE_COLLECTION:
         utility.drop_collection(COLLECTION_NAME)
+
+    if utility.has_collection(COLLECTION_NAME):
+        return Collection(COLLECTION_NAME)
 
     schema = CollectionSchema(
         fields=[
@@ -51,6 +60,20 @@ def recreate_collection(dimension: int) -> Collection:
     return collection
 
 
+def connect_milvus() -> None:
+    """等待 Milvus 就绪，避免容器首次启动时初始化脚本抢跑。"""
+    for attempt in range(1, CONNECT_ATTEMPTS + 1):
+        try:
+            connections.connect(alias="default", host=MILVUS_HOST, port=MILVUS_PORT)
+            utility.list_collections()
+            return
+        except Exception:
+            connections.disconnect("default")
+            if attempt == CONNECT_ATTEMPTS:
+                raise
+            time.sleep(CONNECT_INTERVAL_SECONDS)
+
+
 def main() -> None:
     documents = load_documents()
     model = SentenceTransformer(MODEL_NAME)
@@ -59,9 +82,9 @@ def main() -> None:
         normalize_embeddings=True,
     )
 
-    connections.connect(alias="default", host=MILVUS_HOST, port=MILVUS_PORT)
-    collection = recreate_collection(int(vectors.shape[1]))
-    collection.insert(
+    connect_milvus()
+    collection = prepare_collection(int(vectors.shape[1]))
+    collection.upsert(
         [
             [document["id"] for document in documents],
             [document["category"] for document in documents],

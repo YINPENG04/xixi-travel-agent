@@ -7,6 +7,7 @@ services:
     restart: unless-stopped
     environment:
       PORT: 8081
+      XIXI_KNOWLEDGE_BASE_URL: http://knowledge-service:8090
     ports:
       - "8081:8081"
     healthcheck:
@@ -14,6 +15,9 @@ services:
       interval: 15s
       timeout: 5s
       retries: 6
+    depends_on:
+      knowledge-service:
+        condition: service_healthy
 
   mongodb:
     image: mongo:8.0
@@ -86,6 +90,46 @@ services:
     depends_on:
       - etcd
       - minio
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:9091/healthz"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+
+  knowledge-init:
+    build:
+      context: ./knowledge
+    command: ["python", "seed_milvus.py"]
+    restart: "no"
+    environment:
+      MILVUS_HOST: milvus
+      MILVUS_PORT: 19530
+    volumes:
+      - huggingface-cache:/models
+    depends_on:
+      milvus:
+        condition: service_healthy
+
+  knowledge-service:
+    build:
+      context: ./knowledge
+    restart: unless-stopped
+    environment:
+      MILVUS_HOST: milvus
+      MILVUS_PORT: 19530
+      XIXI_RAG_MIN_SCORE: ${XIXI_RAG_MIN_SCORE:-0.30}
+    ports:
+      - "8090:8090"
+    volumes:
+      - huggingface-cache:/models
+    depends_on:
+      knowledge-init:
+        condition: service_completed_successfully
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8090/health')"]
+      interval: 15s
+      timeout: 5s
+      retries: 12
 
   meilisearch:
     image: getmeili/meilisearch:v1.15
@@ -124,3 +168,4 @@ volumes:
   minio-data:
   milvus-data:
   meili-data:
+  huggingface-cache:

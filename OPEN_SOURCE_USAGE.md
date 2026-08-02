@@ -1,6 +1,6 @@
 # 嘻嘻出行智能 Agent 开源项目使用说明
 
-更新时间：2026-07-24
+更新时间：2026-08-02
 
 本文说明嘻嘻出行项目使用或参考的开源项目、代码归属、许可证及使用边界。版本信息以当前项目源码和容器编排文件为准。
 
@@ -17,7 +17,7 @@
 | 自行开发 | Spring Boot 出行业务服务 | 报价、订单、行程、安全、权限、幂等和状态机 | 是 |
 | 自行开发 | MCP 工具层 | 将出行业务能力封装为 Agent 可调用工具 | 是 |
 | 自行开发 | 嘻嘻出行界面 | 路线地图、车型报价卡、订单卡和行程状态卡 | 是 |
-| 自行开发 | Milvus 知识库脚本 | 地点别名、车型说明、规则和政策的向量检索 | 是 |
+| 自行开发 | RAG 知识检索服务 | 地点别名、车型说明、规则和政策的向量检索及 MCP 接入 | 是 |
 
 ## 三、直接 Fork 的开源项目
 
@@ -50,11 +50,11 @@
 | `services/ride-service/` | Java、Spring Boot、Spring AI | 路线、报价、订单、安全服务及 MCP 工具 |
 | `services/ride-service/src/main/java/` | Java | 订单状态机、用户权限校验、报价有效期、幂等控制和业务接口 |
 | `app/` | TypeScript、React、MapLibre | 地图、车型报价卡、订单卡和状态展示 |
-| `knowledge/` | Python、PyMilvus | Milvus 集合初始化、向量写入和知识数据样例 |
-| `docker-compose.xixi.yml` | Docker Compose | PostgreSQL、Redis、Milvus、etcd、MinIO 和业务服务编排 |
+| `knowledge/` | Python、FastAPI、PyMilvus | 问题向量化、Milvus 语义检索、集合初始化和知识数据样例 |
+| `docker-compose.xixi.yml` | Docker Compose | PostgreSQL、Redis、Milvus、RAG、etcd、MinIO 和业务服务编排 |
 | `librechat.xixi.yaml` | YAML | LibreChat 的 Agent 与 MCP 接入配置 |
 
-项目主体不是纯 Python 项目：核心交易后端是 Java，前端是 TypeScript/React；Python 只用于知识库初始化和向量数据处理。
+项目主体不是纯 Python 项目：核心交易后端是 Java，前端是 TypeScript/React；Python 用于知识库初始化、向量数据处理和 RAG 语义检索服务。
 
 ## 六、主要运行时依赖
 
@@ -70,6 +70,8 @@
 | MapLibre GL JS | 5.6.0 | 前端地图、路线和车辆位置展示 | BSD-3-Clause |
 | PyMilvus | 2.5.12 | Python 访问 Milvus | Apache-2.0 |
 | sentence-transformers | 4.1.0 | 生成知识库文本向量 | Apache-2.0 |
+| FastAPI | 0.116.1 | 提供 RAG 检索 HTTP API | MIT License |
+| Uvicorn | 0.35.0 | 运行 RAG ASGI 服务 | BSD-3-Clause |
 
 ### Redis 授权说明
 
@@ -107,6 +109,6 @@ MongoDB 默认使用 SSPL-1.0，属于源码可用授权。发布前应对实际
 
 ## 十、结论
 
-嘻嘻出行以 LibreChat 为直接 Fork 基线，以 Namma Yatri 作为业务流程参考；出行业务后端、MCP 工具、订单状态机、地图与报价组件以及 Milvus 知识库脚本均为自行开发。运行时同时依赖 Spring、PostgreSQL、Milvus、MapLibre 等第三方项目，并包含 Redis、MongoDB、MinIO 等需要额外关注授权条件的组件。
+嘻嘻出行以 LibreChat 为直接 Fork 基线，以 Namma Yatri 作为业务流程参考；出行业务后端、MCP 工具、订单状态机、地图与报价组件以及 RAG 知识检索服务均为自行开发。运行时同时依赖 Spring、PostgreSQL、Milvus、MapLibre 等第三方项目，并包含 Redis、MongoDB、MinIO 等需要额外关注授权条件的组件。
 
 本文是工程归属和开源依赖说明，不构成法律意见。
