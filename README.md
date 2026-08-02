@@ -2,7 +2,7 @@
 
 一句话，轻松出发。
 
-嘻嘻出行是一个面向打车、路线规划和行程服务场景的智能出行 Agent 开源项目。项目包含可独立运行的 React/MapLibre 演示界面、基于 LibreChat 的 Agent 入口、Spring Boot 出行业务服务、Spring AI MCP 工具，以及基于 sentence-transformers 与 Milvus 的 RAG 知识检索链路。
+嘻嘻出行是一个面向打车、路线规划和行程服务场景的智能出行 Agent 开源项目。项目包含可独立运行的 React/MapLibre 演示界面、基于 LibreChat 的 Agent 入口、Spring Boot 出行业务服务、MySQL 交易持久化、Spring AI MCP 工具，以及基于 sentence-transformers 与 Milvus 的 RAG 知识检索链路。
 
 
 ![嘻嘻出行界面](./public/og.png)
@@ -74,20 +74,19 @@ flowchart LR
         MCP["Spring AI MCP Server<br/>SSE"]
         RS["Spring Boot Ride Service<br/>REST + 领域逻辑"]
         RAG["Python RAG Service<br/>语义检索"]
-        MEM["当前实现：内存仓储"]
+        MYSQL["MySQL 8.4<br/>报价与订单持久化"]
 
         LC <--> LLM
         LC -->|"MCP 工具调用"| MCP
         MCP --> RS
         RS -->|"知识查询"| RAG
-        RS <--> MEM
+        RS <--> MYSQL
     end
 
     subgraph Infra["可选本地基础设施"]
         MONGO["MongoDB<br/>LibreChat 数据"]
         REDIS["Redis<br/>缓存基础设施"]
         MEILI["Meilisearch<br/>全文检索"]
-        PG["PostgreSQL<br/>计划中的交易持久化"]
         MILVUS["Milvus<br/>向量知识库"]
         ETCD["etcd"]
         MINIO["MinIO"]
@@ -108,7 +107,6 @@ flowchart LR
     LC --> MONGO
     LC --> REDIS
     LC --> MEILI
-    RS -. 后续接入 .-> PG
     RS -. 后续接入 .-> REDIS
 ```
 
@@ -165,19 +163,21 @@ MCP Server 使用同步工具模式，通过 SSE 对 LibreChat 提供能力。Ag
 
 路径：`services/ride-service/`
 
-技术栈：Java 21、Spring Boot 3.4.5、Spring AI 1.0.1。
+技术栈：Java 21、Spring Boot 3.4.5、Spring Data JPA、Flyway、MySQL 8.4、Spring AI 1.0.1。
 
 核心规则：
 
 - 报价有效期为五分钟。
 - 报价按基础价、里程单价和车型倍率计算。
 - 创建订单必须携带 `Idempotency-Key`。
-- 幂等键按“用户 ID + 幂等键”隔离。
+- 幂等键按“用户 ID + 幂等键”隔离，并由 MySQL 唯一索引兜底。
 - 查询和取消订单时校验订单所属用户。
+- 状态更新使用数据库悲观行锁，并通过版本字段检测并发覆盖。
+- Flyway 负责创建和演进报价、订单表结构。
 - 非法状态迁移会被拒绝。
 - 参数错误和业务错误以 RFC 9457 `ProblemDetail` 返回。
 
-当前订单、报价和幂等键保存在进程内的并发 Map 中，服务重启后会丢失。Docker Compose 虽然提供 PostgreSQL 和 Redis，但当前 Java 代码还没有将仓储接入它们。
+报价快照、订单、订单状态和幂等键已持久化到 MySQL，服务重启后仍可查询。Redis 当前由 LibreChat 使用，业务侧尚未将报价 TTL 和短期状态缓存接入 Redis。
 
 ### 5. 订单状态机
 
@@ -228,8 +228,8 @@ Spring Boot 将检索能力同时暴露为 REST API 和 `travelKnowledgeSearch` 
 | `ride-service` | 报价、订单、REST API 和 MCP 工具 | 已接入 |
 | `mongodb` | LibreChat 用户、会话和应用数据 | LibreChat 模式使用 |
 | `meilisearch` | LibreChat 全文检索 | LibreChat 模式使用 |
-| `redis` | LibreChat 缓存；计划承载业务幂等和短期状态 | 部分接入 |
-| `postgres` | 计划存储订单、报价快照、行程和发票 | 容器已提供，业务代码未接入 |
+| `redis` | LibreChat 缓存；计划承载业务短期缓存和限流 | 部分接入 |
+| `mysql` | 保存报价快照、订单、状态和幂等键 | Spring Data JPA 已接入 |
 | `knowledge-init` | 生成向量并初始化知识集合 | 首次启动时自动执行 |
 | `knowledge-service` | 问题向量化、相似度检索和结果过滤 | REST 与 MCP 已接入 |
 | `milvus` | 保存和检索知识向量 | RAG 链路已接入 |
@@ -257,7 +257,7 @@ Spring Boot 将检索能力同时暴露为 REST API 和 `travelKnowledgeSearch` 
 3. Agent 调用 `rideQuote` 获得三类车型报价。
 4. 用户明确确认后，Agent 使用报价 ID 和幂等键调用 `rideCreate`。
 5. Agent 使用 `rideStatus` 查询状态，或在确认后调用 `rideCancel`。
-6. Spring Boot 服务负责报价有效期、用户隔离、幂等和状态迁移。
+6. Spring Boot 通过 MySQL 事务、唯一索引和行锁保证报价有效期、用户隔离、幂等和状态迁移。
 
 ### RAG 知识问答数据流
 
@@ -282,7 +282,9 @@ Spring Boot 将检索能力同时暴露为 REST API 和 `travelKnowledgeSearch` 
 │  ├─ src/main/java/.../domain/  报价、订单、车型和状态机
 │  ├─ src/main/java/.../knowledge/ RAG 检索客户端与返回模型
 │  ├─ src/main/java/.../mcp/     Spring AI MCP 工具
-│  └─ src/main/java/.../service/ 业务规则和内存仓储
+│  ├─ src/main/java/.../persistence/ JPA 实体与 MySQL Repository
+│  ├─ src/main/java/.../service/ 业务规则和事务编排
+│  └─ src/main/resources/db/     Flyway 数据库迁移
 ├─ knowledge/                    RAG 服务、Milvus 初始化脚本和知识样例
 │  ├─ rag_service.py             FastAPI 语义检索服务
 │  ├─ seed_milvus.py             知识向量化与集合初始化
@@ -318,6 +320,13 @@ npm run dev
 
 - JDK 21 或更高版本
 - Maven 3.9 或更高版本
+- MySQL 8.4
+
+先启动项目提供的 MySQL：
+
+```bash
+docker compose -f docker-compose.xixi.yml up -d mysql
+```
 
 ```bash
 cd services/ride-service
@@ -330,6 +339,8 @@ mvn spring-boot:run
 - REST API：`http://localhost:8081/api/v1`
 - MCP SSE：`http://localhost:8081/sse`
 - 健康检查：`http://localhost:8081/actuator/health`
+
+默认连接 `localhost:3306/xixi`。启动时 Flyway 会自动执行 `db/migration/` 中的脚本，Hibernate 随后校验实体与数据库结构是否一致。
 
 ### 模式 C：启动基础设施
 
@@ -423,6 +434,10 @@ uvicorn knowledge.rag_service:app --host 0.0.0.0 --port 8090
 
 | 环境变量 | 默认值 | 说明 |
 |---|---|---|
+| `MYSQL_DATABASE` | `xixi` | MySQL 数据库名称 |
+| `MYSQL_USER` | `xixi` | MySQL 业务账号 |
+| `MYSQL_PASSWORD` | `xixi-local-only` | MySQL 业务账号密码 |
+| `MYSQL_ROOT_PASSWORD` | `xixi-root-local-only` | MySQL root 密码，仅用于本地初始化 |
 | `MILVUS_HOST` | `localhost` | Milvus 地址 |
 | `MILVUS_PORT` | `19530` | Milvus 端口 |
 | `XIXI_MILVUS_COLLECTION` | `xixi_travel_knowledge` | 集合名称 |
@@ -495,13 +510,13 @@ mvn test
 
 仓库同时保留 Vinext/Cloudflare Worker 构建方式。`worker/index.ts` 是 Worker 入口，`build/sites-vite-plugin.ts` 在构建结束后打包站点元数据。
 
-完整 Agent 链路包含 MongoDB、Redis、Meilisearch、Spring Boot、Milvus、etcd 和 MinIO，不等同于单页演示站点，需要使用 Docker Compose 或等价基础设施单独部署。
+完整 Agent 链路包含 MongoDB、MySQL、Redis、Meilisearch、Spring Boot、Milvus、etcd 和 MinIO，不等同于单页演示站点，需要使用 Docker Compose 或等价基础设施单独部署。
 
 ## 当前边界与生产化注意事项
 
 - 当前系统是 MVP，不包含真实车辆调度、支付、短信、实名认证、定位上报或生产级风控。
 - 前端演示界面尚未调用 Spring Boot REST/MCP 服务。
-- 后端订单和报价使用内存仓储，服务重启后数据丢失。
+- MySQL 已保存报价和订单，但尚未持久化前端演示中的发票、司机定位和真实行程轨迹。
 - `X-Xixi-User` 是演示身份头，不是生产级认证机制。
 - 内部状态推进接口当前没有独立鉴权，只适合受控演示环境。
 - Agent 的“创建或取消前确认”主要依靠工具描述和编排规则，后端尚未强制验证确认凭证。
@@ -509,13 +524,13 @@ mvn test
 - 当前 RAG 使用小规模样例知识和单路向量检索，尚未加入关键词混合检索、重排序、文档版本管理和回答引用界面。
 - `librechat.xixi.yaml` 中的隐私政策和服务条款地址是占位地址，公开部署前必须替换。
 - 公共 OpenStreetMap 瓦片服务不应被当作无配额、无保障的商业地图 CDN。
-- 生产化时应将订单、报价快照、行程和发票写入 PostgreSQL，并将幂等键、报价有效期和短期状态迁移到 Redis 或兼容组件。
+- 生产化时应完善 MySQL 备份、只读副本、慢查询监控和数据归档，并将报价缓存、限流和短期状态接入 Redis 或兼容组件。
 
 ## 建议演进路线
 
 1. 将前端报价、下单和行程页面接入 Spring Boot REST API。
-2. 使用 PostgreSQL 实现订单、报价、行程和发票仓储。
-3. 使用 Redis 或 Valkey 实现分布式幂等、报价 TTL 和短期状态。
+2. 在 MySQL 中补充行程轨迹、司机分配、发票和审计日志仓储。
+3. 使用 Redis 或 Valkey 实现报价缓存、限流和短期状态。
 4. 增加标准登录鉴权，将用户身份安全传递给 REST 和 MCP 工具。
 5. 为 RAG 增加混合检索、重排序、知识版本管理和可视化引用。
 6. 为重要操作增加可验证的确认令牌和审计日志。

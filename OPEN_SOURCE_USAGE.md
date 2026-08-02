@@ -47,11 +47,11 @@
 
 | 路径 | 技术 | 内容 |
 |---|---|---|
-| `services/ride-service/` | Java、Spring Boot、Spring AI | 路线、报价、订单、安全服务及 MCP 工具 |
-| `services/ride-service/src/main/java/` | Java | 订单状态机、用户权限校验、报价有效期、幂等控制和业务接口 |
+| `services/ride-service/` | Java、Spring Boot、Spring AI、JPA | 路线、报价、订单、MySQL 持久化、安全服务及 MCP 工具 |
+| `services/ride-service/src/main/java/` | Java | 订单状态机、用户权限校验、报价有效期、数据库幂等和业务接口 |
 | `app/` | TypeScript、React、MapLibre | 地图、车型报价卡、订单卡和状态展示 |
 | `knowledge/` | Python、FastAPI、PyMilvus | 问题向量化、Milvus 语义检索、集合初始化和知识数据样例 |
-| `docker-compose.xixi.yml` | Docker Compose | PostgreSQL、Redis、Milvus、RAG、etcd、MinIO 和业务服务编排 |
+| `docker-compose.xixi.yml` | Docker Compose | MySQL、Redis、Milvus、RAG、etcd、MinIO 和业务服务编排 |
 | `librechat.xixi.yaml` | YAML | LibreChat 的 Agent 与 MCP 接入配置 |
 
 项目主体不是纯 Python 项目：核心交易后端是 Java，前端是 TypeScript/React；Python 用于知识库初始化、向量数据处理和 RAG 语义检索服务。
@@ -62,8 +62,11 @@
 |---|---|---|---|
 | Spring Boot | 3.4.5 | Java Web、校验和业务服务基础框架 | Apache-2.0 |
 | Spring AI | 1.0.1 | MCP 服务端和 AI 工具集成 | Apache-2.0 |
-| PostgreSQL | `postgres:16-alpine` | 计划用于订单、行程、报价快照和发票等强一致数据 | PostgreSQL License |
-| Redis | `redis:7.4-alpine` | 计划用于缓存、幂等键、报价有效期和短期状态 | RSALv2 或 SSPLv1，非 OSI 认可的开源许可证 |
+| Spring Data JPA | 3.4.5 | JPA Repository 与事务数据访问 | Apache-2.0 |
+| MySQL Community Server | `mysql:8.4` | 保存报价快照、订单、状态和幂等键 | GPL-2.0 |
+| MySQL Connector/J | 9.1.0 | Spring Boot 访问 MySQL 的 JDBC 驱动 | GPL-2.0 with Universal FOSS Exception |
+| Flyway | 10.20.1 | MySQL 数据库版本迁移 | Apache-2.0 |
+| Redis | `redis:7.4-alpine` | LibreChat 缓存；计划用于报价缓存、限流和短期状态 | RSALv2 或 SSPLv1，非 OSI 认可的开源许可证 |
 | Milvus | `milvusdb/milvus:v2.5.12` | 地点别名、车型说明、规则和政策的向量检索 | Apache-2.0 |
 | etcd | `quay.io/coreos/etcd:v3.5.18` | Milvus 元数据协调组件 | Apache-2.0 |
 | MinIO | `minio/minio:RELEASE.2025-05-24T17-08-30Z` | Milvus 对象存储组件 | AGPL-3.0 |
@@ -109,6 +112,6 @@ MongoDB 默认使用 SSPL-1.0，属于源码可用授权。发布前应对实际
 
 ## 十、结论
 
-嘻嘻出行以 LibreChat 为直接 Fork 基线，以 Namma Yatri 作为业务流程参考；出行业务后端、MCP 工具、订单状态机、地图与报价组件以及 RAG 知识检索服务均为自行开发。运行时同时依赖 Spring、PostgreSQL、Milvus、MapLibre 等第三方项目，并包含 Redis、MongoDB、MinIO 等需要额外关注授权条件的组件。
+嘻嘻出行以 LibreChat 为直接 Fork 基线，以 Namma Yatri 作为业务流程参考；出行业务后端、MCP 工具、订单状态机、MySQL 持久化适配、地图与报价组件以及 RAG 知识检索服务均为自行开发。运行时同时依赖 Spring、MySQL、Milvus、MapLibre 等第三方项目，并包含 Redis、MongoDB、MinIO 等需要额外关注授权条件的组件。
 
 本文是工程归属和开源依赖说明，不构成法律意见。
