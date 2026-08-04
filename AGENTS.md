@@ -25,6 +25,7 @@ LibreChat Agent
 
 - `app/`：React + MapLibre 纯前端演示。
 - `services/ride-service/.../api/`：REST 接口和协议适配。
+- `services/ride-service/.../cache/`：Redis 报价与订单缓存。
 - `services/ride-service/.../service/`：业务规则和事务编排。
 - `services/ride-service/.../domain/`：领域模型和订单状态机。
 - `services/ride-service/.../persistence/`：JPA 实体与 Repository。

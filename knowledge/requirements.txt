@@ -1,4 +1,6 @@
 pymilvus==2.5.12
 sentence-transformers==4.1.0
+jieba==0.42.1
+rank-bm25==0.2.2
 fastapi==0.116.1
 uvicorn==0.35.0

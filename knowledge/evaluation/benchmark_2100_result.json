@@ -1,0 +1,81 @@
+{
+  "benchmark_date": "2026-08-03",
+  "dataset": "knowledge/evaluation/xixi_eval_holdout_2100.jsonl",
+  "parameter_selection_dataset": "knowledge/evaluation/xixi_eval_2100.jsonl",
+  "queries": 2100,
+  "documents": 7,
+  "query_distribution": {
+    "exact": 630,
+    "semantic": 840,
+    "noisy": 630
+  },
+  "environment": {
+    "device": "CPU",
+    "semantic_backend": "exact_cosine",
+    "note": "离线精确余弦用于检索质量对照，未测量 Milvus HNSW 近似误差或容器网络延迟。"
+  },
+  "configuration": {
+    "embedding_model": "sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2",
+    "reranker_model": "cross-encoder/mmarco-mMiniLMv2-L12-H384-v1",
+    "top_k": 3,
+    "semantic_min_score": 0.3,
+    "semantic_weight": 0.95,
+    "keyword_weight": 0.05,
+    "rerank_retrieval_weight": 0.9,
+    "rerank_candidate_multiplier": 1
+  },
+  "metric_definition": {
+    "top1_accuracy": "排名第一的知识片段是否命中相关知识 ID",
+    "recall_at_3": "Top 3 召回的相关知识 ID 比例"
+  },
+  "results": {
+    "semantic": {
+      "top1_accuracy": 0.894286,
+      "recall_at_3": 0.998571,
+      "mrr_at_3": 0.941667,
+      "ndcg_at_3": 0.956342,
+      "runtime_seconds": 14.874
+    },
+    "keyword": {
+      "top1_accuracy": 0.642381,
+      "recall_at_3": 0.844286,
+      "mrr_at_3": 0.730159,
+      "ndcg_at_3": 0.759419,
+      "runtime_seconds": 0.997
+    },
+    "hybrid": {
+      "top1_accuracy": 0.902857,
+      "recall_at_3": 1.0,
+      "mrr_at_3": 0.950238,
+      "ndcg_at_3": 0.963212,
+      "runtime_seconds": 15.88
+    },
+    "hybrid_rerank": {
+      "top1_accuracy": 0.90619,
+      "recall_at_3": 1.0,
+      "mrr_at_3": 0.951905,
+      "ndcg_at_3": 0.964442,
+      "runtime_seconds": 78.551
+    }
+  },
+  "hybrid_rerank_by_difficulty": {
+    "exact": {
+      "top1_accuracy": 0.938095,
+      "recall_at_3": 1.0
+    },
+    "semantic": {
+      "top1_accuracy": 0.946429,
+      "recall_at_3": 1.0
+    },
+    "noisy": {
+      "top1_accuracy": 0.820635,
+      "recall_at_3": 1.0
+    }
+  },
+  "delta_vs_semantic": {
+    "top1_accuracy_percentage_points": 1.1904,
+    "recall_at_3_percentage_points": 0.1429,
+    "mrr_at_3_percentage_points": 1.0238
+  },
+  "limitations": "留出集使用未参与调参的前后缀，但与开发集共享核心意图模板，且知识库只有 7 条文档；结果用于回归验证和方案对照，不代表真实生产流量。"
+}

@@ -5,6 +5,11 @@ spring:
     url: ${SPRING_DATASOURCE_URL:jdbc:mysql://localhost:3306/xixi?useUnicode=true&characterEncoding=utf8&serverTimezone=UTC}
     username: ${SPRING_DATASOURCE_USERNAME:xixi}
     password: ${SPRING_DATASOURCE_PASSWORD:xixi-local-only}
+  data:
+    redis:
+      url: ${SPRING_DATA_REDIS_URL:redis://localhost:6379}
+      connect-timeout: 2s
+      timeout: 1s
   jpa:
     open-in-view: false
     hibernate:
@@ -22,9 +27,11 @@ spring:
         version: 0.1.0
         type: SYNC
         instructions: >
-          嘻嘻出行工具提供知识检索、报价、创建订单、查询状态、取消订单、异步通知和发票资格查询能力。
+          嘻嘻出行工具提供知识检索、长期记忆检索、Session 状态、报价、创建订单、查询状态、取消订单、异步通知和发票资格查询能力。
           回答地点别名、车型、报价规则、安全要求或发票政策前，优先调用知识检索工具，
           只根据检索结果中存在的事实回答；没有匹配资料时应明确说明。
+          个性化推荐前优先检索当前用户的长期记忆；只有用户明确同意时才保存或删除长期记忆。
+          当前报价、订单和待确认操作属于 Session 短期状态，不得写入长期记忆。
           创建或取消订单前必须取得用户明确确认。
         sse-message-endpoint: /mcp/messages
 
@@ -36,6 +43,15 @@ rocketmq:
 
 xixi:
   knowledge-base-url: ${XIXI_KNOWLEDGE_BASE_URL:http://localhost:8090}
+  cache:
+    enabled: ${XIXI_REDIS_ENABLED:false}
+    order-ttl: ${XIXI_ORDER_CACHE_TTL:2m}
+    memory-ttl: ${XIXI_MEMORY_CACHE_TTL:30m}
+    memory-search-ttl: ${XIXI_MEMORY_SEARCH_CACHE_TTL:10m}
+    session-context-ttl: ${XIXI_SESSION_CONTEXT_TTL:30m}
+  memory:
+    semantic-index-enabled: ${XIXI_MEMORY_INDEX_ENABLED:true}
+    index-url: ${XIXI_MEMORY_INDEX_URL:${XIXI_KNOWLEDGE_BASE_URL:http://localhost:8090}}
   messaging:
     enabled: ${XIXI_MESSAGING_ENABLED:false}
     topic: ${XIXI_RIDE_EVENT_TOPIC:xixi-ride-events}
@@ -56,8 +72,11 @@ management:
     health:
       probes:
         enabled: true
+  health:
+    redis:
+      enabled: ${XIXI_REDIS_ENABLED:false}
 
 info:
   app:
     name: 嘻嘻出行
-    description: 智能出行 Agent、MySQL、RocketMQ 事件驱动业务与 MCP 服务
+    description: 智能出行 Agent、MySQL、Redis 缓存、RocketMQ 事件驱动业务与 MCP 服务

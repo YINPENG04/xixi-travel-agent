@@ -11,6 +11,14 @@ services:
       SPRING_DATASOURCE_URL: jdbc:mysql://mysql:3306/${MYSQL_DATABASE:-xixi}?useUnicode=true&characterEncoding=utf8&serverTimezone=UTC
       SPRING_DATASOURCE_USERNAME: ${MYSQL_USER:-xixi}
       SPRING_DATASOURCE_PASSWORD: ${MYSQL_PASSWORD:-xixi-local-only}
+      SPRING_DATA_REDIS_URL: redis://redis:6379
+      XIXI_REDIS_ENABLED: "true"
+      XIXI_ORDER_CACHE_TTL: ${XIXI_ORDER_CACHE_TTL:-2m}
+      XIXI_MEMORY_CACHE_TTL: ${XIXI_MEMORY_CACHE_TTL:-30m}
+      XIXI_MEMORY_SEARCH_CACHE_TTL: ${XIXI_MEMORY_SEARCH_CACHE_TTL:-10m}
+      XIXI_SESSION_CONTEXT_TTL: ${XIXI_SESSION_CONTEXT_TTL:-30m}
+      XIXI_MEMORY_INDEX_ENABLED: ${XIXI_MEMORY_INDEX_ENABLED:-true}
+      XIXI_MEMORY_INDEX_URL: http://knowledge-service:8090
       ROCKETMQ_NAME_SERVER: rocketmq-namesrv:9876
       XIXI_MESSAGING_ENABLED: "true"
       XIXI_RIDE_EVENT_TOPIC: ${XIXI_RIDE_EVENT_TOPIC:-xixi-ride-events}
@@ -28,10 +36,13 @@ services:
         condition: service_healthy
       mysql:
         condition: service_healthy
+      redis:
+        condition: service_healthy
       rocketmq-broker:
         condition: service_healthy
 
   mongodb:
+    profiles: ["librechat"]
     image: mongo:8.0
     restart: unless-stopped
     volumes:
@@ -65,6 +76,11 @@ services:
     command: ["redis-server", "--appendonly", "yes"]
     volumes:
       - redis-data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
 
   rocketmq-namesrv:
     image: apache/rocketmq:5.5.0
@@ -157,6 +173,7 @@ services:
     environment:
       MILVUS_HOST: milvus
       MILVUS_PORT: 19530
+      XIXI_USER_MEMORY_COLLECTION: ${XIXI_USER_MEMORY_COLLECTION:-xixi_user_memories}
     volumes:
       - huggingface-cache:/models
     depends_on:
@@ -171,6 +188,14 @@ services:
       MILVUS_HOST: milvus
       MILVUS_PORT: 19530
       XIXI_RAG_MIN_SCORE: ${XIXI_RAG_MIN_SCORE:-0.30}
+      XIXI_RAG_CANDIDATE_MULTIPLIER: ${XIXI_RAG_CANDIDATE_MULTIPLIER:-4}
+      XIXI_RAG_SEMANTIC_WEIGHT: ${XIXI_RAG_SEMANTIC_WEIGHT:-0.95}
+      XIXI_RAG_KEYWORD_WEIGHT: ${XIXI_RAG_KEYWORD_WEIGHT:-0.05}
+      XIXI_RERANK_RETRIEVAL_WEIGHT: ${XIXI_RERANK_RETRIEVAL_WEIGHT:-0.90}
+      XIXI_RERANK_CANDIDATE_MULTIPLIER: ${XIXI_RERANK_CANDIDATE_MULTIPLIER:-1}
+      XIXI_RERANKER_MODEL: ${XIXI_RERANKER_MODEL:-cross-encoder/mmarco-mMiniLMv2-L12-H384-v1}
+      XIXI_USER_MEMORY_COLLECTION: ${XIXI_USER_MEMORY_COLLECTION:-xixi_user_memories}
+      XIXI_MEMORY_MIN_SCORE: ${XIXI_MEMORY_MIN_SCORE:-0.35}
     ports:
       - "8090:8090"
     volumes:
@@ -185,6 +210,7 @@ services:
       retries: 12
 
   meilisearch:
+    profiles: ["librechat"]
     image: getmeili/meilisearch:v1.15
     restart: unless-stopped
     environment:

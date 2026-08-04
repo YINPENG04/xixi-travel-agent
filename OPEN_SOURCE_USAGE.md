@@ -17,7 +17,7 @@
 | 自行开发 | Spring Boot 出行业务服务 | 报价、订单、行程、安全、权限、幂等和状态机 | 是 |
 | 自行开发 | MCP 工具层 | 将出行业务能力封装为 Agent 可调用工具 | 是 |
 | 自行开发 | 嘻嘻出行界面 | 路线地图、车型报价卡、订单卡和行程状态卡 | 是 |
-| 自行开发 | RAG 知识检索服务 | 地点别名、车型说明、规则和政策的向量检索及 MCP 接入 | 是 |
+| 自行开发 | RAG 知识检索服务 | 地点别名、车型说明、规则和政策的混合检索、精排及 MCP 接入 | 是 |
 
 ## 三、直接 Fork 的开源项目
 
@@ -47,10 +47,10 @@
 
 | 路径 | 技术 | 内容 |
 |---|---|---|
-| `services/ride-service/` | Java、Spring Boot、Spring AI、JPA、RocketMQ Spring | 路线、报价、订单、MySQL 持久化、订单事件及 MCP 工具 |
+| `services/ride-service/` | Java、Spring Boot、Spring AI、JPA、Spring Data Redis、RocketMQ Spring | 路线、报价、订单、MySQL 持久化、Redis 缓存、订单事件及 MCP 工具 |
 | `services/ride-service/src/main/java/` | Java | 订单状态机、用户权限校验、报价有效期、数据库幂等、Transactional Outbox 和消息消费者 |
 | `app/` | TypeScript、React、MapLibre | 地图、车型报价卡、订单卡和状态展示 |
-| `knowledge/` | Python、FastAPI、PyMilvus | 问题向量化、Milvus 语义检索、集合初始化和知识数据样例 |
+| `knowledge/` | Python、FastAPI、PyMilvus | Milvus 与 BM25 混合召回、加权分数融合、CrossEncoder 精排、集合初始化和知识数据样例 |
 | `docker-compose.xixi.yml` | Docker Compose | MySQL、Redis、RocketMQ、Milvus、RAG、etcd、MinIO 和业务服务编排 |
 | `librechat.xixi.yaml` | YAML | LibreChat 的 Agent 与 MCP 接入配置 |
 
@@ -63,18 +63,22 @@
 | Spring Boot | 3.4.5 | Java Web、校验和业务服务基础框架 | Apache-2.0 |
 | Spring AI | 1.0.1 | MCP 服务端和 AI 工具集成 | Apache-2.0 |
 | Spring Data JPA | 3.4.5 | JPA Repository 与事务数据访问 | Apache-2.0 |
+| Spring Data Redis | 3.4.5 | 报价和热点订单状态缓存 | Apache-2.0 |
 | MySQL Community Server | `mysql:8.4` | 保存报价快照、订单、状态和幂等键 | GPL-2.0 |
 | MySQL Connector/J | 9.1.0 | Spring Boot 访问 MySQL 的 JDBC 驱动 | GPL-2.0 with Universal FOSS Exception |
 | Flyway | 10.20.1 | MySQL 数据库版本迁移 | Apache-2.0 |
 | Apache RocketMQ | `apache/rocketmq:5.5.0` | 订单事件、延迟派单、异步通知、重试和死信队列 | Apache-2.0 |
 | RocketMQ Spring | 2.3.5 | Spring Boot 生产者、顺序/延迟发送和消息监听器 | Apache-2.0 |
-| Redis | `redis:7.4-alpine` | LibreChat 缓存；计划用于报价缓存、限流和短期状态 | RSALv2 或 SSPLv1，非 OSI 认可的开源许可证 |
+| Redis | `redis:7.4-alpine` | 报价 TTL、热点订单状态和 LibreChat 运行缓存 | RSALv2 或 SSPLv1，非 OSI 认可的开源许可证 |
 | Milvus | `milvusdb/milvus:v2.5.12` | 地点别名、车型说明、规则和政策的向量检索 | Apache-2.0 |
 | etcd | `quay.io/coreos/etcd:v3.5.18` | Milvus 元数据协调组件 | Apache-2.0 |
 | MinIO | `minio/minio:RELEASE.2025-05-24T17-08-30Z` | Milvus 对象存储组件 | AGPL-3.0 |
 | MapLibre GL JS | 5.6.0 | 前端地图、路线和车辆位置展示 | BSD-3-Clause |
 | PyMilvus | 2.5.12 | Python 访问 Milvus | Apache-2.0 |
-| sentence-transformers | 4.1.0 | 生成知识库文本向量 | Apache-2.0 |
+| sentence-transformers | 4.1.0 | 生成知识库文本向量并运行 CrossEncoder 精排模型 | Apache-2.0 |
+| jieba | 0.42.1 | 中文关键词分词 | MIT License |
+| rank-bm25 | 0.2.2 | BM25 关键词召回 | Apache-2.0 |
+| mmarco-mMiniLMv2-L12-H384-v1 | Hugging Face 模型 | 多语言候选片段相关性精排 | Apache-2.0 |
 | FastAPI | 0.116.1 | 提供 RAG 检索 HTTP API | MIT License |
 | Uvicorn | 0.35.0 | 运行 RAG ASGI 服务 | BSD-3-Clause |
 

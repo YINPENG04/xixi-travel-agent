@@ -2,6 +2,7 @@ package cn.xixitravel.ride.service;
 
 import cn.xixitravel.ride.api.CreateRideRequest;
 import cn.xixitravel.ride.api.QuoteRequest;
+import cn.xixitravel.ride.cache.RideCacheService;
 import cn.xixitravel.ride.domain.RideOrder;
 import cn.xixitravel.ride.domain.RideQuote;
 import cn.xixitravel.ride.domain.RideStatus;
@@ -40,6 +41,7 @@ public class RideService {
     private final RideOrderRepository orderRepository;
     private final RideOutboxService outboxService;
     private final RideMessagingProperties messagingProperties;
+    private final RideCacheService cacheService;
     private final TransactionTemplate transactionTemplate;
 
     public RideService(
@@ -48,6 +50,7 @@ public class RideService {
             RideOrderRepository orderRepository,
             RideOutboxService outboxService,
             RideMessagingProperties messagingProperties,
+            RideCacheService cacheService,
             PlatformTransactionManager transactionManager
     ) {
         this.clock = clock;
@@ -55,6 +58,7 @@ public class RideService {
         this.orderRepository = orderRepository;
         this.outboxService = outboxService;
         this.messagingProperties = messagingProperties;
+        this.cacheService = cacheService;
         this.transactionTemplate = new TransactionTemplate(transactionManager);
     }
 
@@ -89,6 +93,7 @@ public class RideService {
                 .toList();
 
         quoteRepository.saveAll(quotes.stream().map(RideQuoteEntity::from).toList());
+        quotes.forEach(cacheService::putQuoteAfterCommit);
         return quotes;
     }
 
@@ -105,11 +110,12 @@ public class RideService {
                 .map(RideOrderEntity::toDomain)
                 .orElse(null);
         if (existing != null) {
+            cacheService.putOrder(existing);
             return existing;
         }
 
         try {
-            return Objects.requireNonNull(transactionTemplate.execute(status -> {
+            RideOrder created = Objects.requireNonNull(transactionTemplate.execute(status -> {
                 RideOrderEntity concurrentExisting = orderRepository
                         .findByUserIdAndIdempotencyKey(normalizedUserId, normalizedKey)
                         .orElse(null);
@@ -140,19 +146,29 @@ public class RideService {
                 );
                 return saved.toDomain();
             }));
+            cacheService.putOrder(created);
+            return created;
         } catch (DataIntegrityViolationException exception) {
-            return orderRepository
+            RideOrder concurrent = orderRepository
                     .findByUserIdAndIdempotencyKey(normalizedUserId, normalizedKey)
                     .map(RideOrderEntity::toDomain)
                     .orElseThrow(() -> exception);
+            cacheService.putOrder(concurrent);
+            return concurrent;
         }
     }
 
     @Transactional(readOnly = true)
     public RideOrder getRide(String userId, String orderId) {
-        return orderRepository.findByOrderIdAndUserId(orderId, userId)
+        RideOrder cached = cacheService.getOrder(userId, orderId).orElse(null);
+        if (cached != null) {
+            return cached;
+        }
+        RideOrder order = orderRepository.findByOrderIdAndUserId(orderId, userId)
                 .map(RideOrderEntity::toDomain)
                 .orElseThrow(() -> new RideNotFoundException(orderId));
+        cacheService.putOrderAfterCommit(order);
+        return order;
     }
 
     @Transactional
@@ -161,7 +177,9 @@ public class RideService {
                 .orElseThrow(() -> new RideNotFoundException(orderId));
         order.transitionTo(RideStatus.CANCELLED);
         outboxService.append(order, RideEventType.ORDER_CANCELLED, 0);
-        return order.toDomain();
+        RideOrder result = order.toDomain();
+        cacheService.putOrderAfterCommit(result);
+        return result;
     }
 
     @Transactional
@@ -170,7 +188,9 @@ public class RideService {
                 .orElseThrow(() -> new RideNotFoundException(orderId));
         order.transitionTo(status);
         outboxService.append(order, eventTypeFor(status), 0);
-        return order.toDomain();
+        RideOrder result = order.toDomain();
+        cacheService.putOrderAfterCommit(result);
+        return result;
     }
 
     private RideEventType eventTypeFor(RideStatus status) {
@@ -183,9 +203,13 @@ public class RideService {
     }
 
     private RideQuote requireValidQuote(String quoteId) {
-        RideQuote quote = quoteRepository.findById(quoteId)
-                .map(RideQuoteEntity::toDomain)
-                .orElseThrow(() -> new IllegalArgumentException("报价不存在：" + quoteId));
+        RideQuote quote = cacheService.getQuote(quoteId).orElseGet(() -> {
+            RideQuote loaded = quoteRepository.findById(quoteId)
+                    .map(RideQuoteEntity::toDomain)
+                    .orElseThrow(() -> new IllegalArgumentException("报价不存在：" + quoteId));
+            cacheService.putQuoteAfterCommit(loaded);
+            return loaded;
+        });
         if (quote.isExpired(clock.instant())) {
             throw new IllegalArgumentException("报价已过期，请重新询价");
         }

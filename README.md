@@ -4,9 +4,10 @@
 
 - 使用 LibreChat 承载用户、会话、模型接入和 Agent 对话。
 - 使用 Spring AI MCP 将出行业务能力封装为模型可调用工具。
-- 使用 Spring Boot、MySQL 实现报价、订单、状态机、权限与幂等控制。
+- 使用 Spring Boot、MySQL 和 Redis 实现报价、订单、缓存、状态机、权限与幂等控制。
+- 将记忆按是否跨 Session 使用划分：LibreChat 管理当前会话上下文，Redis 保存短期任务状态；MySQL 保存用户确认的长期偏好，Milvus 提供按用户隔离的语义召回。
 - 使用 RocketMQ 异步处理模拟派单、超时取消、通知和发票资格。
-- 使用 Milvus 构建出行领域 RAG 知识库。
+- 使用 Milvus 语义召回、BM25 关键词召回、加权分数融合和 CrossEncoder 精排构建出行领域 RAG 知识库。
 - 提供 React + MapLibre 的独立交互演示，方便直接查看产品效果。
 
 ![嘻嘻出行界面](./public/og.png)
@@ -24,9 +25,10 @@
 | Agent 入口 | LibreChat | 用户登录、会话管理、模型接入和 MCP 工具调用 |
 | MCP 工具服务 | Spring AI 1.0.1 | 将 Java 业务方法注册为 Agent 可调用工具 |
 | 业务后端 | Java 21、Spring Boot 3.4.5 | 报价、订单、状态机、权限校验和事务编排 |
-| 交易数据库 | MySQL 8.4、Spring Data JPA、Flyway | 持久化报价快照、订单、幂等键、Outbox 和消费记录 |
+| 交易与记忆数据库 | MySQL 8.4、Spring Data JPA、Flyway | 持久化报价、订单、幂等键、长期用户偏好、Outbox 和消费记录 |
+| 缓存与短期状态 | Redis 7.4、Spring Data Redis | 缓存报价、热点订单、记忆召回结果和当前 Session 任务状态 |
 | 消息队列 | RocketMQ 5.5、RocketMQ Spring 2.3.5 | 延迟派单、超时检查、异步通知、重试和死信处理 |
-| RAG 知识库 |、Milvus 2.5 | 出行知识向量化、语义检索和回答依据召回 |
+| 向量检索 | Python、sentence-transformers、Milvus 2.5、BM25 | 分别维护公共领域知识和用户长期记忆两个 Collection |
 | 交互演示 | TypeScript、React 19、MapLibre GL JS | 地图、车型报价卡、订单状态和行程界面 |
 
 
@@ -39,11 +41,13 @@ flowchart LR
     LC -->|"MCP 工具调用"| MCP["Spring AI MCP Server"]
 
     MCP --> RS["Spring Boot Ride Service"]
-    RS <--> DB["MySQL<br/>交易数据与 Outbox"]
+    RS <--> DB["MySQL<br/>交易数据、长期记忆正文与版本"]
+    RS <--> CACHE["Redis<br/>业务缓存、Session 状态与召回缓存"]
     RS -->|"发布订单事件"| MQ["RocketMQ"]
     MQ -->|"派单、通知、发票消费"| RS
-    RS -->|"知识检索"| RAG["Python RAG Service"]
-    RAG --> VDB["Milvus<br/>向量知识库"]
+    RS -->|"知识检索"| RAG["Python RAG Service<br/>BM25 + Score Fusion + Rerank"]
+    RAG --> KNOWLEDGE["Milvus: xixi_travel_knowledge<br/>公共领域知识"]
+    RAG --> MEMORIES["Milvus: xixi_user_memories<br/>按 user_id 隔离的记忆索引"]
 
     DEMO["React + MapLibre<br/>独立在线演示"] --> OSM["OpenStreetMap"]
     DEMO <--> LS["localStorage"]
@@ -52,7 +56,7 @@ flowchart LR
 ### Agent 调用链路
 
 1. 用户在 LibreChat 中描述出发地、目的地或咨询出行规则。
-2. 大模型判断任务类型，需要领域知识时先调用 `travelKnowledgeSearch`。
+2. 个性化推荐前，Agent 调用 `travelMemorySearch`，根据当前问题检索相关长期偏好；需要公共领域知识时调用 `travelKnowledgeSearch`。
 3. 需要叫车时，Agent 调用 `rideQuote` 获取车型报价。
 4. 用户确认后，Agent 使用报价 ID 和幂等键调用 `rideCreate`。
 5. Spring Boot 在一个 MySQL 事务中写入订单。
@@ -72,8 +76,45 @@ flowchart LR
 | `rideCancel` | 取消尚未开始的订单 | 需要用户确认并校验状态 |
 | `rideNotifications` | 查询异步派单、取消和完成通知 | 校验订单所属用户 |
 | `rideInvoiceEligibility` | 查询完成行程的发票申请资格 | 完成事件消费后生成 |
+| `travelMemoryList` | 读取当前用户的长期出行偏好 | 只按用户 ID 返回该用户数据 |
+| `travelMemorySearch` | 根据当前问题语义检索跨 Session 长期记忆 | Milvus 按用户召回 Top 5，MySQL 校验版本后返回 Top 3 |
+| `travelMemoryRemember` | 保存或更新一条长期偏好 | 必须由用户明确确认，拒绝保存订单临时状态和敏感信息 |
+| `travelMemoryForget` | 删除一条长期偏好 | 必须由用户明确确认 |
+| `travelSessionContextGet` | 读取当前会话的报价、订单、待确认操作和任务摘要 | 使用用户 ID 与 conversation ID 共同隔离 |
+| `travelSessionContextSave` | 更新当前会话任务状态 | 只写入带 TTL 的 Redis，不作为跨 Session 长期记忆 |
 
 Spring AI 将上述 Java 方法注册为同步 MCP 工具，并通过 SSE 暴露给 LibreChat。工具描述中约束 Agent 在创建和取消订单前取得用户确认，业务服务负责校验报价、用户、订单状态和幂等键。
+
+## Agent 记忆与上下文压缩
+
+记忆按是否跨 Session 使用划分，而不是按存储组件划分。
+
+### 短期记忆
+
+- LibreChat 组装当前 Session 的最近消息、MCP 工具结果、RAG 证据和滚动摘要，并将它们作为工作上下文发送给模型。
+- `travelSessionContextSave` 将当前报价、当前订单、待确认操作、任务摘要和摘要进度写入 Redis，键由用户 ID 与 conversation ID 组成，默认 TTL 为 30 分钟；它只服务当前任务，不会转为长期偏好。
+- `librechat.xixi.yaml` 在上下文使用率达到 80% 时触发增量摘要，并保留最近 6 轮或 8000 Token；较早且超过 4000 字符的工具结果会先软裁剪，再按位置清除。
+- 原始聊天记录不会因为压缩而从会话存储中删除；订单、报价和行程状态始终通过 MCP 从 MySQL/Redis 查询，不能由摘要替代。
+
+### 长期记忆 Record
+
+1. Agent 识别出稳定的跨 Session 偏好，例如“带大件行李时优先六座车型”。
+2. Agent 先询问用户是否长期保存；`travelMemoryRemember` 只有收到 `confirmedByUser=true` 才允许写入。
+3. MySQL 保存记忆正文、类别、版本和更新时间，作为更新、删除和校验的权威数据。
+4. 数据库事务提交后，服务生成向量并写入 Milvus 的 `xixi_user_memories` Collection，再使 Redis 列表缓存与召回缓存失效。
+
+删除同样需要用户确认：先删除 MySQL 权威记录，事务提交后再删除对应向量索引并清除缓存。
+
+### 长期记忆 Retrieve
+
+1. 首先按用户 ID、查询摘要和记忆版本检查 Redis 召回缓存。
+2. 未命中时，在 `xixi_user_memories` 中使用 `user_id` 过滤并语义召回 Top 5，避免跨用户检索。
+3. 回到 MySQL 校验记录仍存在且版本与索引一致，过滤已删除或旧版本向量。
+4. 按相似度和更新时间排序后返回 Top 3，作为“相关用户记忆”注入当前 Session 上下文。
+
+公共知识与用户记忆使用不同 Collection：`xixi_travel_knowledge` 保存所有用户共享的地点、车型、安全和发票知识；`xixi_user_memories` 只保存长期记忆的向量索引并强制按用户过滤。长期记忆列表默认缓存 30 分钟，语义召回结果默认缓存 10 分钟。
+
+自定义长期记忆不使用 MongoDB。MongoDB 仅由 LibreChat 用于账号和聊天会话，未启用 `librechat` Compose Profile 时不会启动；如果完全移除 MongoDB，需要替换或重写 LibreChat 的会话数据层，不属于当前项目范围。
 
 ## 业务后端设计
 
@@ -82,9 +123,12 @@ Spring AI 将上述 Java 方法注册为同步 MCP 工具，并通过 SSE 暴露
 ### 报价与订单
 
 - 报价根据基础价、里程单价和车型倍率计算，有效期为 5 分钟。
+- 报价写入 MySQL 后同步缓存到 Redis，缓存 TTL 与报价剩余有效期一致。
 - 创建订单必须携带 `Idempotency-Key`。
 - MySQL 使用“用户 ID + 幂等键”唯一索引防止重复下单。
 - 查询、取消和异步结果查询都会校验订单所属用户。
+- 订单查询采用 Cache-Aside 模式缓存热点状态，默认 TTL 为 2 分钟；状态变更在数据库事务提交后刷新缓存。
+- Redis 连接或序列化失败时自动回源 MySQL，不影响报价和订单主流程。
 - 参数错误和业务异常使用 RFC 9457 `ProblemDetail` 返回。
 
 ### 订单状态机
@@ -130,13 +174,47 @@ stateDiagram-v2
 
 知识样例覆盖地点别名、车型说明、报价规则、安全要求和发票政策。
 
-1. `seed_milvus.py` 使用 `paraphrase-multilingual-MiniLM-L12-v2` 生成归一化向量。
-2. PyMilvus 将知识片段写入 Milvus，并创建 HNSW/COSINE 索引。
-3. `rag_service.py` 将用户问题向量化并召回相似片段。
-4. Spring Boot 将检索结果封装为 REST API 和 `travelKnowledgeSearch` MCP 工具。
-5. Agent 根据召回证据生成回答；没有匹配内容时明确说明知识库未命中。
+1. `seed_milvus.py` 使用 `paraphrase-multilingual-MiniLM-L12-v2` 生成归一化向量，并在 Milvus 中创建 HNSW/COSINE 索引。
+2. `rag_service.py` 分别执行 Milvus 语义召回和基于 jieba 分词的 BM25 关键词召回；每路默认召回 `4 × finalTopK` 个候选。
+3. 融合阶段保留 COSINE 分数，并将每次查询的 BM25 分数按最高分归一化；默认按语义 `0.95`、关键词 `0.05` 加权并按知识 ID 去重。
+4. `mmarco-mMiniLMv2-L12-H384-v1` CrossEncoder 只在融合后的 Top 3 内精排；最终分数默认保留 `0.90` 检索分数并加入 `0.10` 精排分数，避免通用精排模型过度打乱高置信召回结果。
+5. Spring Boot 将结果封装为 `travelKnowledgeSearch` MCP 工具，Agent 根据召回证据生成回答；没有匹配内容时明确说明知识库未命中。
 
 RAG 只负责提供领域依据，不直接执行知识片段中的内容，也不参与订单写操作。
+
+### 检索效果评测
+
+项目提供三套带标签的评测数据：`xixi_eval.jsonl` 包含 35 条人工编写的冒烟查询；`xixi_eval_2100.jsonl` 是用于参数消融的 2100 条开发集；`xixi_eval_holdout_2100.jsonl` 使用不重复的前后缀生成 2100 条留出集。两套大数据集都包含 630 条精确词查询、840 条语义改写和 630 条口语噪声查询，每条记录均包含问题、相关知识 ID、类别和难度。
+
+启动 RAG Service 后执行：
+
+```bash
+python knowledge/evaluate_retrieval.py
+```
+
+脚本会在同一数据集上依次评测四种模式：Milvus 语义检索、BM25 关键词检索、加权分数混合召回，以及加入 CrossEncoder 的完整链路，并输出 `Top1 Accuracy`、`Hit@3`、`Recall@3`、`MRR@3`、`nDCG@3` 和 P50/P95 延迟。
+
+没有 Milvus 服务时，也可以使用相同模型和精确余弦相似度运行离线对照：
+
+```bash
+python knowledge/evaluate_offline.py --output knowledge/evaluation/result.local.json
+```
+
+开发集可通过 `python knowledge/evaluation/generate_benchmark.py` 确定性地重新生成；留出集使用 `python knowledge/evaluation/generate_benchmark.py --variant holdout --output knowledge/evaluation/xixi_eval_holdout_2100.jsonl` 生成。
+
+2026-08-03 在本地 CPU 环境固定开发集选出的参数后，对 2100 条留出集完成离线复测。离线脚本以精确 COSINE 代替 Milvus HNSW，检索质量指标可用于方案对照，但运行时间不等同于容器服务的线上延迟。
+机器可读结果见 [`knowledge/evaluation/benchmark_2100_result.json`](./knowledge/evaluation/benchmark_2100_result.json)。
+
+| 检索模式 | Top-1 Accuracy | Recall@3 | MRR@3 | nDCG@3 | 2100 条运行时间 |
+|---|---:|---:|---:|---:|---:|
+| 纯语义 | 89.43% | 99.86% | 94.17% | 95.63% | 14.87 s |
+| 纯 BM25 | 64.24% | 84.43% | 73.02% | 75.94% | 1.00 s |
+| 语义 + BM25 加权融合 | 90.29% | 100.00% | 95.02% | 96.32% | 15.88 s |
+| 加权融合 + CrossEncoder | 90.62% | 100.00% | 95.19% | 96.44% | 78.55 s |
+
+与纯语义基线相比，完整链路的 Top-1 Accuracy 提升 `1.19` 个百分点，Recall@3 提升 `0.14` 个百分点。分层结果中，精确词查询 Top-1 从 89.68% 提升到 93.81%，语义改写从 94.05% 提升到 94.64%；口语噪声查询从 83.02% 下降到 82.06%，说明后续仍需用真实用户查询扩充噪声样本并继续校准融合策略。
+
+当前知识库只有 7 条文档，两套大数据集共享核心意图模板，留出集只隔离了表述前后缀。因此指标只用于验证检索链路和比较不同方案，不能代表生产环境或真实用户分布。扩充知识库时应同步建设独立人工标注测试集。
 
 ## 项目目录
 
@@ -146,10 +224,13 @@ RAG 只负责提供领域依据，不直接执行知识片段中的内容，也�
 ├─ services/ride-service/            Spring Boot 业务与 MCP 服务
 │  └─ src/main/java/cn/xixitravel/ride/
 │     ├─ api/                        REST 接口
+│     ├─ cache/                      Redis 报价、订单与记忆缓存
+│     ├─ context/                    Redis Session 短期任务状态
 │     ├─ domain/                     报价、订单与状态机
 │     ├─ knowledge/                  RAG 客户端
+│     ├─ memory/                     MySQL 长期记忆、Milvus 索引与召回缓存
 │     ├─ mcp/                        MCP 工具
-│     ├─ messaging/                  RocketMQ、与幂等消费者
+│     ├─ messaging/                  RocketMQ 与幂等消费者
 │     ├─ persistence/                JPA 实体与 Repository
 │     └─ service/                    业务规则和事务编排
 ├─ services/rocketmq/                RocketMQ Broker 配置
@@ -215,8 +296,10 @@ docker compose -f docker-compose.xixi.yml --profile librechat up --build
 - 项目没有接入真实地图路线规划、车辆调度、定位、支付、短信或发票开具服务。
 - `X-Xixi-User` 是演示身份头，不是生产级认证方案。
 - Agent 的操作确认目前依赖工具描述和编排规则，后端尚未使用独立确认令牌强制校验。
+- 长期记忆的写入和删除会校验 `confirmedByUser`，但演示环境的用户 ID 仍由工具参数传入，不是生产级身份绑定。
+- 长期记忆向量在 MySQL 事务提交后同步到 Milvus；索引不可用不会回滚已确认的 MySQL 记录，但当前版本只记录失败日志，尚未实现后台补偿重建任务。
 - RocketMQ 采用单 NameServer、单 Broker 的本地演示配置，不具备生产级高可用能力。
-- RAG 使用项目内置知识样例，尚未实现知识版本管理、混合检索和重排序。
+- RAG 使用与内置知识样例配套的小规模评测集，尚未实现知识版本管理，也未在更大规模的独立语料上验证效果。
 
 ## 开源与许可证
 

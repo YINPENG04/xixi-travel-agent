@@ -48,6 +48,10 @@ next-env.d.ts
 **/target/
 **/__pycache__/
 *.log
+/knowledge/evaluation/*.local.json
+/.eval-venv/
+/.eval-downloads/
+/.hf-cache/
 
 # pinned upstream checkout; recreate with scripts/bootstrap-librechat.ps1
 /vendor/LibreChat/

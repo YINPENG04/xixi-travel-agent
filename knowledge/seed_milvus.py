@@ -12,6 +12,9 @@ from sentence_transformers import SentenceTransformer
 
 
 COLLECTION_NAME = os.getenv("XIXI_MILVUS_COLLECTION", "xixi_travel_knowledge")
+USER_MEMORY_COLLECTION_NAME = os.getenv(
+    "XIXI_USER_MEMORY_COLLECTION", "xixi_user_memories"
+)
 MILVUS_HOST = os.getenv("MILVUS_HOST", "localhost")
 MILVUS_PORT = os.getenv("MILVUS_PORT", "19530")
 MODEL_NAME = os.getenv(
@@ -60,6 +63,47 @@ def prepare_collection(dimension: int) -> Collection:
     return collection
 
 
+def prepare_user_memory_collection(dimension: int) -> Collection:
+    """创建与公共知识库隔离的用户长期记忆集合。"""
+    if utility.has_collection(USER_MEMORY_COLLECTION_NAME):
+        return Collection(USER_MEMORY_COLLECTION_NAME)
+
+    schema = CollectionSchema(
+        fields=[
+            FieldSchema(
+                "memory_id",
+                DataType.VARCHAR,
+                max_length=36,
+                is_primary=True,
+                auto_id=False,
+            ),
+            FieldSchema(
+                "user_id",
+                DataType.VARCHAR,
+                max_length=128,
+                is_partition_key=True,
+            ),
+            FieldSchema("category", DataType.VARCHAR, max_length=32),
+            FieldSchema("memory_key", DataType.VARCHAR, max_length=64),
+            FieldSchema("memory_value", DataType.VARCHAR, max_length=1000),
+            FieldSchema("memory_version", DataType.INT64),
+            FieldSchema("updated_at", DataType.INT64),
+            FieldSchema("embedding", DataType.FLOAT_VECTOR, dim=dimension),
+        ],
+        description="嘻嘻出行按用户隔离的跨会话长期记忆",
+    )
+    collection = Collection(USER_MEMORY_COLLECTION_NAME, schema=schema)
+    collection.create_index(
+        field_name="embedding",
+        index_params={
+            "metric_type": "COSINE",
+            "index_type": "HNSW",
+            "params": {"M": 16, "efConstruction": 200},
+        },
+    )
+    return collection
+
+
 def connect_milvus() -> None:
     """等待 Milvus 就绪，避免容器首次启动时初始化脚本抢跑。"""
     for attempt in range(1, CONNECT_ATTEMPTS + 1):
@@ -84,6 +128,7 @@ def main() -> None:
 
     connect_milvus()
     collection = prepare_collection(int(vectors.shape[1]))
+    memory_collection = prepare_user_memory_collection(int(vectors.shape[1]))
     collection.upsert(
         [
             [document["id"] for document in documents],
@@ -95,7 +140,12 @@ def main() -> None:
     )
     collection.flush()
     collection.load()
+    memory_collection.load()
     print(f"已写入 {collection.num_entities} 条嘻嘻出行知识数据。")
+    print(
+        f"已准备用户长期记忆集合 {USER_MEMORY_COLLECTION_NAME}，"
+        f"当前 {memory_collection.num_entities} 条。"
+    )
 
 
 if __name__ == "__main__":

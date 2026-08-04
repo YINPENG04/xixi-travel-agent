@@ -1,5 +1,6 @@
 package cn.xixitravel.ride.messaging;
 
+import cn.xixitravel.ride.cache.RideCacheService;
 import cn.xixitravel.ride.domain.RideStatus;
 import cn.xixitravel.ride.persistence.RideOrderEntity;
 import cn.xixitravel.ride.persistence.RideOrderRepository;
@@ -20,6 +21,7 @@ public class RideEventProcessor {
     private final RideNotificationRepository notificationRepository;
     private final RideInvoiceEligibilityRepository invoiceRepository;
     private final RideOutboxService outboxService;
+    private final RideCacheService cacheService;
     private final Clock clock;
 
     public RideEventProcessor(
@@ -28,6 +30,7 @@ public class RideEventProcessor {
             RideNotificationRepository notificationRepository,
             RideInvoiceEligibilityRepository invoiceRepository,
             RideOutboxService outboxService,
+            RideCacheService cacheService,
             Clock clock
     ) {
         this.consumedEventRepository = consumedEventRepository;
@@ -35,6 +38,7 @@ public class RideEventProcessor {
         this.notificationRepository = notificationRepository;
         this.invoiceRepository = invoiceRepository;
         this.outboxService = outboxService;
+        this.cacheService = cacheService;
         this.clock = clock;
     }
 
@@ -52,10 +56,12 @@ public class RideEventProcessor {
                 && order.getStatus() == RideStatus.CREATED) {
             order.transitionTo(RideStatus.DRIVER_ASSIGNED);
             outboxService.append(order, RideEventType.DRIVER_ASSIGNED, 0);
+            cacheService.putOrderAfterCommit(order.toDomain());
         } else if (event.eventType() == RideEventType.ORDER_TIMEOUT_CHECK
                 && order.getStatus() == RideStatus.CREATED) {
             order.transitionTo(RideStatus.CANCELLED);
             outboxService.append(order, RideEventType.ORDER_CANCELLED, 0);
+            cacheService.putOrderAfterCommit(order.toDomain());
         }
     }
 

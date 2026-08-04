@@ -45,7 +45,7 @@ jobs:
         run: mvn --batch-mode test
 
   knowledge:
-    name: RAG syntax checks
+    name: RAG checks
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
@@ -54,5 +54,9 @@ jobs:
         uses: actions/setup-python@v5
         with:
           python-version: "3.12"
+      - name: Install retrieval test dependencies
+        run: pip install jieba==0.42.1 rank-bm25==0.2.2
       - name: Check Python files
-        run: python -m py_compile knowledge/seed_milvus.py knowledge/rag_service.py
+        run: python -m py_compile knowledge/seed_milvus.py knowledge/rag_service.py knowledge/hybrid_retrieval.py knowledge/evaluate_retrieval.py knowledge/evaluate_offline.py knowledge/evaluation/generate_benchmark.py
+      - name: Test retrieval
+        run: python -m unittest discover -s knowledge/tests -v

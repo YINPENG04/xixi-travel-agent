@@ -16,6 +16,10 @@ spring:
     enabled: true
 
 xixi:
+  cache:
+    enabled: false
+  memory:
+    semantic-index-enabled: false
   messaging:
     enabled: false
 

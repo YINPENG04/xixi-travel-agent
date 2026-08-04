@@ -1,7 +1,33 @@
-version: 1.2.1
+version: 1.3.13
 cache: true
 
+# Native LibreChat memory persists to MongoDB. Xixi uses its MCP tools instead:
+# MySQL is the long-term source of truth, Milvus provides per-user semantic
+# retrieval, and Redis stores short-term task state and retrieval caches.
+memory:
+  disabled: true
+
+# Keep recent turns verbatim, progressively trim old large tool outputs, and
+# create an incremental checkpoint before the model context is exhausted.
+summarization:
+  enabled: true
+  trigger:
+    type: token_ratio
+    value: 0.80
+  reserveRatio: 0.05
+  maxSummaryTokens: 2000
+  retainRecent:
+    turns: 6
+    tokens: 8000
+  contextPruning:
+    enabled: true
+    keepLastAssistants: 4
+    softTrimRatio: 0.30
+    hardClearRatio: 0.60
+    minPrunableToolChars: 4000
+
 interface:
+  contextUsage: true
   privacyPolicy:
     externalUrl: https://example.com/privacy
     openNewTab: true
