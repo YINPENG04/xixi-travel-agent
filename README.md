@@ -15,6 +15,7 @@
 ## 在线体验
 
 - 在线演示：[https://yinpeng04.github.io/xixi-travel-agent/](https://yinpeng04.github.io/xixi-travel-agent/)
+（仓库远端未接入大模型，无法连接Agent，仅为前段演示）
 - GitHub 仓库：[https://github.com/YINPENG04/xixi-travel-agent](https://github.com/YINPENG04/xixi-travel-agent)
 
 
