@@ -41,8 +41,15 @@ jobs:
           distribution: temurin
           java-version: "21"
           cache: maven
+      - name: Start RocketMQ for broker integration test
+        run: docker compose -f ../../docker-compose.xixi.yml up -d --wait rocketmq-broker
       - name: Test
+        env:
+          XIXI_ROCKETMQ_IT: "true"
         run: mvn --batch-mode test
+      - name: Stop integration services
+        if: always()
+        run: docker compose -f ../../docker-compose.xixi.yml down -v
 
   knowledge:
     name: RAG checks

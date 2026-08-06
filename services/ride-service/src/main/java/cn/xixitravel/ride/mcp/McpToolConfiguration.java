@@ -1,7 +1,7 @@
 package cn.xixitravel.ride.mcp;
 
 import cn.xixitravel.ride.context.SessionContextService;
-import cn.xixitravel.ride.knowledge.KnowledgeSearchService;
+import cn.xixitravel.ride.knowledge.KnowledgeReActLoopService;
 import cn.xixitravel.ride.messaging.RideAsyncQueryService;
 import cn.xixitravel.ride.memory.AgentMemoryService;
 import cn.xixitravel.ride.service.RideService;
@@ -16,7 +16,7 @@ public class McpToolConfiguration {
     @Bean
     ToolCallbackProvider xixiRideTools(
             RideService rideService,
-            KnowledgeSearchService knowledgeSearchService,
+            KnowledgeReActLoopService knowledgeReActLoopService,
             RideAsyncQueryService asyncQueryService,
             AgentMemoryService agentMemoryService,
             SessionContextService sessionContextService
@@ -24,7 +24,7 @@ public class McpToolConfiguration {
         return MethodToolCallbackProvider.builder()
                 .toolObjects(new RideTools(
                         rideService,
-                        knowledgeSearchService,
+                        knowledgeReActLoopService,
                         asyncQueryService,
                         agentMemoryService,
                         sessionContextService

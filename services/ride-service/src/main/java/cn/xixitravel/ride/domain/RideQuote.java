@@ -5,6 +5,8 @@ import java.time.Instant;
 
 public record RideQuote(
         String quoteId,
+        String origin,
+        String destination,
         VehicleType vehicleType,
         String vehicleName,
         int seats,

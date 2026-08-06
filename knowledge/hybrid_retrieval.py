@@ -33,6 +33,15 @@ class RerankedCandidate:
     score: float
 
 
+@dataclass(frozen=True)
+class RetrievalFeedback:
+    status: str
+    next_action: str
+    top_score: float
+    score_gap: float
+    reason: str
+
+
 class Reranker(Protocol):
     def predict(
         self,
@@ -40,6 +49,49 @@ class Reranker(Protocol):
         *,
         show_progress_bar: bool = False,
     ) -> Sequence[float]: ...
+
+
+def retrieval_feedback(
+    candidates: Sequence[RetrievalCandidate],
+    min_score: float,
+    min_score_gap: float = 0.03,
+) -> RetrievalFeedback:
+    """将召回结果转为供 Agent 下一轮决策使用的结构化反馈。"""
+    if not candidates:
+        return RetrievalFeedback(
+            "EMPTY",
+            "REFORMULATE_AND_RETRY_ONCE",
+            0.0,
+            0.0,
+            "没有召回满足最低过滤条件的知识片段",
+        )
+
+    top_score = float(candidates[0].score)
+    second_score = float(candidates[1].score) if len(candidates) > 1 else 0.0
+    score_gap = top_score - second_score if len(candidates) > 1 else top_score
+    if top_score < min_score:
+        return RetrievalFeedback(
+            "LOW_SCORE",
+            "REFORMULATE_AND_RETRY_ONCE",
+            top_score,
+            score_gap,
+            "最高召回分数低于证据反馈阈值",
+        )
+    if len(candidates) > 1 and score_gap < min_score_gap:
+        return RetrievalFeedback(
+            "AMBIGUOUS",
+            "ADD_DISAMBIGUATING_ENTITY_AND_RETRY_ONCE",
+            top_score,
+            score_gap,
+            "前两条候选分数过于接近，需要补充实体消歧",
+        )
+    return RetrievalFeedback(
+        "EVIDENCE_FOUND",
+        "VERIFY_COVERAGE_THEN_ANSWER",
+        top_score,
+        score_gap,
+        "召回结果达到分数和区分度要求",
+    )
 
 
 def tokenize(text: str) -> list[str]:

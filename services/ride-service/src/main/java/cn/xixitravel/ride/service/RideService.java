@@ -3,6 +3,9 @@ package cn.xixitravel.ride.service;
 import cn.xixitravel.ride.api.CreateRideRequest;
 import cn.xixitravel.ride.api.QuoteRequest;
 import cn.xixitravel.ride.cache.RideCacheService;
+import cn.xixitravel.ride.confirmation.RideActionConfirmationService;
+import cn.xixitravel.ride.confirmation.RideActionType;
+import cn.xixitravel.ride.confirmation.RideConfirmationChallenge;
 import cn.xixitravel.ride.domain.RideOrder;
 import cn.xixitravel.ride.domain.RideQuote;
 import cn.xixitravel.ride.domain.RideStatus;
@@ -42,6 +45,7 @@ public class RideService {
     private final RideOutboxService outboxService;
     private final RideMessagingProperties messagingProperties;
     private final RideCacheService cacheService;
+    private final RideActionConfirmationService confirmationService;
     private final TransactionTemplate transactionTemplate;
 
     public RideService(
@@ -51,6 +55,7 @@ public class RideService {
             RideOutboxService outboxService,
             RideMessagingProperties messagingProperties,
             RideCacheService cacheService,
+            RideActionConfirmationService confirmationService,
             PlatformTransactionManager transactionManager
     ) {
         this.clock = clock;
@@ -59,12 +64,15 @@ public class RideService {
         this.outboxService = outboxService;
         this.messagingProperties = messagingProperties;
         this.cacheService = cacheService;
+        this.confirmationService = confirmationService;
         this.transactionTemplate = new TransactionTemplate(transactionManager);
     }
 
     @Transactional
     public List<RideQuote> quote(QuoteRequest request) {
         Instant expiresAt = clock.instant().plus(QUOTE_TTL);
+        String origin = requireText(request.origin(), "出发地", 255);
+        String destination = requireText(request.destination(), "目的地", 255);
 
         List<RideQuote> quotes = Arrays.stream(VehicleType.values())
                 .map(type -> {
@@ -75,6 +83,8 @@ public class RideService {
                             .setScale(0, RoundingMode.HALF_UP);
                     RideQuote quote = new RideQuote(
                             "Q-" + UUID.randomUUID().toString().substring(0, 8).toUpperCase(),
+                            origin,
+                            destination,
                             type,
                             type.displayName(),
                             type.seats(),
@@ -97,6 +107,51 @@ public class RideService {
         return quotes;
     }
 
+    public RideConfirmationChallenge prepareCreate(
+            String userId,
+            String conversationId,
+            String quoteId,
+            String origin,
+            String destination
+    ) {
+        String normalizedUserId = requireText(userId, "用户 ID", 128);
+        String normalizedConversationId = requireText(conversationId, "会话 ID", 128);
+        String normalizedOrigin = requireText(origin, "出发地", 255);
+        String normalizedDestination = requireText(destination, "目的地", 255);
+        RideQuote quote = requireValidQuote(quoteId);
+        requireMatchingRoute(quote, normalizedOrigin, normalizedDestination);
+        return confirmationService.issue(
+                normalizedUserId,
+                normalizedConversationId,
+                RideActionType.CREATE_RIDE,
+                quote.quoteId(),
+                createFingerprint(quote.quoteId(), normalizedOrigin, normalizedDestination),
+                quote.expiresAt()
+        );
+    }
+
+    public RideConfirmationChallenge prepareCancel(
+            String userId,
+            String conversationId,
+            String orderId
+    ) {
+        String normalizedUserId = requireText(userId, "用户 ID", 128);
+        String normalizedConversationId = requireText(conversationId, "会话 ID", 128);
+        String normalizedOrderId = requireText(orderId, "订单 ID", 32);
+        RideOrder order = getRide(normalizedUserId, normalizedOrderId);
+        if (!order.getStatus().canTransitionTo(RideStatus.CANCELLED)) {
+            throw new IllegalStateException("当前订单状态不允许取消");
+        }
+        return confirmationService.issue(
+                normalizedUserId,
+                normalizedConversationId,
+                RideActionType.CANCEL_RIDE,
+                normalizedOrderId,
+                cancelFingerprint(normalizedOrderId),
+                null
+        );
+    }
+
     public RideOrder createRide(
             String userId,
             String idempotencyKey,
@@ -104,12 +159,22 @@ public class RideService {
     ) {
         String normalizedUserId = requireText(userId, "用户 ID", 128);
         String normalizedKey = requireText(idempotencyKey, "Idempotency-Key", 128);
+        String normalizedConversationId = requireText(request.conversationId(), "会话 ID", 128);
+        String normalizedQuoteId = requireText(request.quoteId(), "报价 ID", 32);
+        String normalizedOrigin = requireText(request.origin(), "出发地", 255);
+        String normalizedDestination = requireText(request.destination(), "目的地", 255);
 
         RideOrder existing = orderRepository
                 .findByUserIdAndIdempotencyKey(normalizedUserId, normalizedKey)
                 .map(RideOrderEntity::toDomain)
                 .orElse(null);
         if (existing != null) {
+            requireSameIdempotentRequest(
+                    existing,
+                    normalizedQuoteId,
+                    normalizedOrigin,
+                    normalizedDestination
+            );
             cacheService.putOrder(existing);
             return existing;
         }
@@ -120,17 +185,37 @@ public class RideService {
                         .findByUserIdAndIdempotencyKey(normalizedUserId, normalizedKey)
                         .orElse(null);
                 if (concurrentExisting != null) {
-                    return concurrentExisting.toDomain();
+                    RideOrder concurrentOrder = concurrentExisting.toDomain();
+                    requireSameIdempotentRequest(
+                            concurrentOrder,
+                            normalizedQuoteId,
+                            normalizedOrigin,
+                            normalizedDestination
+                    );
+                    return concurrentOrder;
                 }
 
-                RideQuote quote = requireValidQuote(request.quoteId());
+                RideQuote quote = requireValidQuote(normalizedQuoteId);
+                requireMatchingRoute(quote, normalizedOrigin, normalizedDestination);
+                confirmationService.consume(
+                        request.confirmationToken(),
+                        normalizedUserId,
+                        normalizedConversationId,
+                        RideActionType.CREATE_RIDE,
+                        quote.quoteId(),
+                        createFingerprint(
+                                quote.quoteId(),
+                                normalizedOrigin,
+                                normalizedDestination
+                        )
+                );
                 RideOrderEntity order = new RideOrderEntity(
                         "XIXI-" + UUID.randomUUID().toString().substring(0, 8).toUpperCase(),
                         normalizedUserId,
                         normalizedKey,
                         quote,
-                        requireText(request.origin(), "出发地", 255),
-                        requireText(request.destination(), "目的地", 255),
+                        quote.origin(),
+                        quote.destination(),
                         clock.instant()
                 );
                 RideOrderEntity saved = orderRepository.saveAndFlush(order);
@@ -153,6 +238,12 @@ public class RideService {
                     .findByUserIdAndIdempotencyKey(normalizedUserId, normalizedKey)
                     .map(RideOrderEntity::toDomain)
                     .orElseThrow(() -> exception);
+            requireSameIdempotentRequest(
+                    concurrent,
+                    normalizedQuoteId,
+                    normalizedOrigin,
+                    normalizedDestination
+            );
             cacheService.putOrder(concurrent);
             return concurrent;
         }
@@ -172,9 +263,28 @@ public class RideService {
     }
 
     @Transactional
-    public RideOrder cancel(String userId, String orderId) {
-        RideOrderEntity order = orderRepository.findOwnedForUpdate(orderId, userId)
-                .orElseThrow(() -> new RideNotFoundException(orderId));
+    public RideOrder cancel(
+            String userId,
+            String conversationId,
+            String confirmationToken,
+            String orderId
+    ) {
+        String normalizedUserId = requireText(userId, "用户 ID", 128);
+        String normalizedConversationId = requireText(conversationId, "会话 ID", 128);
+        String normalizedOrderId = requireText(orderId, "订单 ID", 32);
+        confirmationService.consume(
+                confirmationToken,
+                normalizedUserId,
+                normalizedConversationId,
+                RideActionType.CANCEL_RIDE,
+                normalizedOrderId,
+                cancelFingerprint(normalizedOrderId)
+        );
+        RideOrderEntity order = orderRepository.findOwnedForUpdate(
+                        normalizedOrderId,
+                        normalizedUserId
+                )
+                .orElseThrow(() -> new RideNotFoundException(normalizedOrderId));
         order.transitionTo(RideStatus.CANCELLED);
         outboxService.append(order, RideEventType.ORDER_CANCELLED, 0);
         RideOrder result = order.toDomain();
@@ -214,6 +324,37 @@ public class RideService {
             throw new IllegalArgumentException("报价已过期，请重新询价");
         }
         return quote;
+    }
+
+    private void requireMatchingRoute(
+            RideQuote quote,
+            String origin,
+            String destination
+    ) {
+        if (!quote.origin().equals(origin) || !quote.destination().equals(destination)) {
+            throw new IllegalArgumentException("下单路线与报价快照不一致，请重新询价");
+        }
+    }
+
+    private void requireSameIdempotentRequest(
+            RideOrder existing,
+            String quoteId,
+            String origin,
+            String destination
+    ) {
+        if (!existing.getQuoteId().equals(quoteId)
+                || !existing.getOrigin().equals(origin)
+                || !existing.getDestination().equals(destination)) {
+            throw new IdempotencyConflictException();
+        }
+    }
+
+    private String createFingerprint(String quoteId, String origin, String destination) {
+        return confirmationService.fingerprint("CREATE_RIDE", quoteId, origin, destination);
+    }
+
+    private String cancelFingerprint(String orderId) {
+        return confirmationService.fingerprint("CANCEL_RIDE", orderId);
     }
 
     private String requireText(String value, String fieldName, int maxLength) {

@@ -19,6 +19,8 @@ class McpToolConfigurationTest {
         assertThat(Arrays.stream(toolCallbackProvider.getToolCallbacks())
                 .map(callback -> callback.getToolDefinition().name()))
                 .contains(
+                        "ridePrepareCreate",
+                        "ridePrepareCancel",
                         "travelMemoryList",
                         "travelMemorySearch",
                         "travelMemoryRemember",

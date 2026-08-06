@@ -16,7 +16,7 @@ DATASET_PATH = PROJECT_ROOT / "knowledge" / "evaluation" / "xixi_eval.jsonl"
 LARGE_DATASET_PATH = (
     PROJECT_ROOT / "knowledge" / "evaluation" / "xixi_eval_2100.jsonl"
 )
-HOLDOUT_DATASET_PATH = (
+SURFACE_VARIANT_DATASET_PATH = (
     PROJECT_ROOT
     / "knowledge"
     / "evaluation"
@@ -77,22 +77,22 @@ class EvaluateRetrievalTest(unittest.TestCase):
             difficulty_counts,
         )
 
-    def test_holdout_has_2100_queries_disjoint_from_benchmark(self) -> None:
+    def test_surface_variant_set_only_has_disjoint_query_strings(self) -> None:
         benchmark = load_cases(LARGE_DATASET_PATH)
-        holdout = load_cases(HOLDOUT_DATASET_PATH)
+        surface_variants = load_cases(SURFACE_VARIANT_DATASET_PATH)
         benchmark_queries = {case.query for case in benchmark}
-        holdout_queries = {case.query for case in holdout}
+        surface_variant_queries = {case.query for case in surface_variants}
 
-        self.assertEqual(2100, len(holdout))
-        self.assertEqual(2100, len(holdout_queries))
-        self.assertTrue(benchmark_queries.isdisjoint(holdout_queries))
+        self.assertEqual(2100, len(surface_variants))
+        self.assertEqual(2100, len(surface_variant_queries))
+        self.assertTrue(benchmark_queries.isdisjoint(surface_variant_queries))
         self.assertEqual(
             {"exact": 630, "semantic": 840, "noisy": 630},
             {
                 difficulty: sum(
-                    case.difficulty == difficulty for case in holdout
+                    case.difficulty == difficulty for case in surface_variants
                 )
-                for difficulty in {case.difficulty for case in holdout}
+                for difficulty in {case.difficulty for case in surface_variants}
             },
         )
 

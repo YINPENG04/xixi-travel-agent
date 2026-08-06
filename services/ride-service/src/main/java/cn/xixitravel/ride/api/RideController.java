@@ -3,6 +3,7 @@ package cn.xixitravel.ride.api;
 import cn.xixitravel.ride.domain.RideOrder;
 import cn.xixitravel.ride.domain.RideQuote;
 import cn.xixitravel.ride.domain.RideStatus;
+import cn.xixitravel.ride.confirmation.RideConfirmationChallenge;
 import cn.xixitravel.ride.messaging.RideAsyncQueryService;
 import cn.xixitravel.ride.messaging.RideInvoiceEligibility;
 import cn.xixitravel.ride.messaging.RideNotification;
@@ -40,16 +41,30 @@ public class RideController {
     @PostMapping("/rides")
     @ResponseStatus(HttpStatus.CREATED)
     public RideOrder createRide(
-            @RequestHeader(value = "X-Xixi-User", defaultValue = "demo-user") String userId,
+            @RequestHeader("X-Xixi-User") String userId,
             @RequestHeader("Idempotency-Key") String idempotencyKey,
             @Valid @RequestBody CreateRideRequest request
     ) {
         return rideService.createRide(userId, idempotencyKey, request);
     }
 
+    @PostMapping("/rides/confirmations/create")
+    public RideConfirmationChallenge prepareCreate(
+            @RequestHeader("X-Xixi-User") String userId,
+            @Valid @RequestBody PrepareRideRequest request
+    ) {
+        return rideService.prepareCreate(
+                userId,
+                request.conversationId(),
+                request.quoteId(),
+                request.origin(),
+                request.destination()
+        );
+    }
+
     @GetMapping("/rides/{orderId}")
     public RideOrder getRide(
-            @RequestHeader(value = "X-Xixi-User", defaultValue = "demo-user") String userId,
+            @RequestHeader("X-Xixi-User") String userId,
             @PathVariable String orderId
     ) {
         return rideService.getRide(userId, orderId);
@@ -57,7 +72,7 @@ public class RideController {
 
     @GetMapping("/rides/{orderId}/notifications")
     public List<RideNotification> notifications(
-            @RequestHeader(value = "X-Xixi-User", defaultValue = "demo-user") String userId,
+            @RequestHeader("X-Xixi-User") String userId,
             @PathVariable String orderId
     ) {
         return asyncQueryService.notifications(userId, orderId);
@@ -65,7 +80,7 @@ public class RideController {
 
     @GetMapping("/rides/{orderId}/invoice-eligibility")
     public RideInvoiceEligibility invoiceEligibility(
-            @RequestHeader(value = "X-Xixi-User", defaultValue = "demo-user") String userId,
+            @RequestHeader("X-Xixi-User") String userId,
             @PathVariable String orderId
     ) {
         return asyncQueryService.invoiceEligibility(userId, orderId);
@@ -73,10 +88,25 @@ public class RideController {
 
     @PostMapping("/rides/{orderId}/cancel")
     public RideOrder cancelRide(
-            @RequestHeader(value = "X-Xixi-User", defaultValue = "demo-user") String userId,
-            @PathVariable String orderId
+            @RequestHeader("X-Xixi-User") String userId,
+            @PathVariable String orderId,
+            @Valid @RequestBody ConfirmedActionRequest request
     ) {
-        return rideService.cancel(userId, orderId);
+        return rideService.cancel(
+                userId,
+                request.conversationId(),
+                request.confirmationToken(),
+                orderId
+        );
+    }
+
+    @PostMapping("/rides/{orderId}/confirmations/cancel")
+    public RideConfirmationChallenge prepareCancel(
+            @RequestHeader("X-Xixi-User") String userId,
+            @PathVariable String orderId,
+            @Valid @RequestBody ConversationRequest request
+    ) {
+        return rideService.prepareCancel(userId, request.conversationId(), orderId);
     }
 
     @PatchMapping("/internal/rides/{orderId}/status/{status}")

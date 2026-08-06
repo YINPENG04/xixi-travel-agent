@@ -1,4 +1,8 @@
-"""生成 2100 条可复现的分层 RAG 检索评测查询。"""
+"""生成 2100 条可复现的 RAG 合成回归查询。
+
+这些查询由 70 个核心问题拼接表述前后缀得到，适合做参数消融和回归检查，
+不构成与开发集语义独立的留出测试集。
+"""
 
 from __future__ import annotations
 
@@ -28,7 +32,7 @@ BENCHMARK_SUFFIXES = (
     "请不要推荐无关的信息。",
 )
 
-HOLDOUT_PREFIXES = (
+SURFACE_VARIANT_PREFIXES = (
     "帮我查一下：",
     "想确认个问题，",
     "麻烦按实际规则回答：",
@@ -41,7 +45,7 @@ HOLDOUT_PREFIXES = (
     "为了不耽误行程，请问，",
 )
 
-HOLDOUT_SUFFIXES = (
+SURFACE_VARIANT_SUFFIXES = (
     "只回答和问题有关的内容。",
     "谢谢，请说明清楚。",
     "我需要据此决定下一步。",
@@ -193,16 +197,17 @@ def main() -> None:
     parser.add_argument("--output", type=Path, default=DEFAULT_OUTPUT)
     parser.add_argument(
         "--variant",
-        choices=("benchmark", "holdout"),
+        choices=("benchmark", "surface-variant", "holdout"),
         default="benchmark",
+        help="holdout 是 surface-variant 的兼容别名；两者都只更换前后缀",
     )
     args = parser.parse_args()
 
-    if args.variant == "holdout":
+    if args.variant in {"surface-variant", "holdout"}:
         cases = generate_cases(
-            HOLDOUT_PREFIXES,
-            HOLDOUT_SUFFIXES,
-            case_prefix="holdout",
+            SURFACE_VARIANT_PREFIXES,
+            SURFACE_VARIANT_SUFFIXES,
+            case_prefix="surface",
         )
     else:
         cases = generate_cases()
@@ -213,6 +218,7 @@ def main() -> None:
         for case in cases:
             target.write(json.dumps(case, ensure_ascii=False) + "\n")
     print(f"已生成 {len(cases)} 条评测查询：{args.output}")
+    print("注意：该数据集共享 70 个核心问题，只用于回归对照，不代表独立泛化能力。")
 
 
 if __name__ == "__main__":

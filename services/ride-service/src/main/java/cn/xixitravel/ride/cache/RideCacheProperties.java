@@ -13,6 +13,8 @@ public class RideCacheProperties {
     private Duration memoryTtl = Duration.ofMinutes(30);
     private Duration memorySearchTtl = Duration.ofMinutes(10);
     private Duration sessionContextTtl = Duration.ofMinutes(30);
+    private Duration reactRagTtl = Duration.ofMinutes(10);
+    private Duration reactRagLockTtl = Duration.ofSeconds(30);
 
     public boolean isEnabled() {
         return enabled;
@@ -52,5 +54,21 @@ public class RideCacheProperties {
 
     public void setSessionContextTtl(Duration sessionContextTtl) {
         this.sessionContextTtl = sessionContextTtl;
+    }
+
+    public Duration getReactRagTtl() {
+        return reactRagTtl;
+    }
+
+    public void setReactRagTtl(Duration reactRagTtl) {
+        this.reactRagTtl = reactRagTtl;
+    }
+
+    public Duration getReactRagLockTtl() {
+        return reactRagLockTtl;
+    }
+
+    public void setReactRagLockTtl(Duration reactRagLockTtl) {
+        this.reactRagLockTtl = reactRagLockTtl;
     }
 }

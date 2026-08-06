@@ -23,6 +23,7 @@ from hybrid_retrieval import (
     KnowledgeDocument,
     RetrievalCandidate,
     rerank,
+    retrieval_feedback,
     weighted_score_fusion,
 )
 
@@ -54,6 +55,10 @@ RERANK_RETRIEVAL_WEIGHT = float(
 RERANK_CANDIDATE_MULTIPLIER = max(
     1, int(os.getenv("XIXI_RERANK_CANDIDATE_MULTIPLIER", "1"))
 )
+FEEDBACK_MIN_SCORE = float(os.getenv("XIXI_RAG_FEEDBACK_MIN_SCORE", "0.40"))
+FEEDBACK_MIN_SCORE_GAP = float(
+    os.getenv("XIXI_RAG_FEEDBACK_MIN_SCORE_GAP", "0.03")
+)
 DATA_PATH = Path(__file__).parent / "data" / "xixi_knowledge.jsonl"
 
 
@@ -70,6 +75,13 @@ class RetrievalMode(str, Enum):
     KEYWORD = "keyword"
     HYBRID = "hybrid"
     HYBRID_RERANK = "hybrid_rerank"
+
+
+class RetrievalStatus(str, Enum):
+    EVIDENCE_FOUND = "EVIDENCE_FOUND"
+    LOW_SCORE = "LOW_SCORE"
+    AMBIGUOUS = "AMBIGUOUS"
+    EMPTY = "EMPTY"
 
 
 class SearchRequest(BaseModel):
@@ -90,6 +102,11 @@ class KnowledgeHit(BaseModel):
 class SearchResponse(BaseModel):
     query: str
     collection: str
+    retrievalStatus: RetrievalStatus
+    recommendedNextAction: str
+    topScore: float
+    scoreGap: float
+    observationReason: str
     hits: list[KnowledgeHit]
 
 
@@ -237,8 +254,10 @@ def search_knowledge(payload: SearchRequest, request: Request) -> SearchResponse
 
         if payload.mode == RetrievalMode.SEMANTIC:
             final_candidates = semantic_candidates[: payload.limit]
+            feedback_candidates = semantic_candidates
         elif payload.mode == RetrievalMode.KEYWORD:
             final_candidates = keyword_candidates[: payload.limit]
+            feedback_candidates = final_candidates
         else:
             fused_candidates = weighted_score_fusion(
                 semantic_candidates,
@@ -246,6 +265,7 @@ def search_knowledge(payload: SearchRequest, request: Request) -> SearchResponse
                 semantic_weight=SEMANTIC_WEIGHT,
                 keyword_weight=KEYWORD_WEIGHT,
             )
+            feedback_candidates = fused_candidates
             if payload.mode == RetrievalMode.HYBRID:
                 final_candidates = fused_candidates[: payload.limit]
             else:
@@ -271,9 +291,21 @@ def search_knowledge(payload: SearchRequest, request: Request) -> SearchResponse
         for candidate in final_candidates
     ]
 
+    feedback = retrieval_feedback(
+        feedback_candidates,
+        FEEDBACK_MIN_SCORE,
+        FEEDBACK_MIN_SCORE_GAP,
+    )
+    retrieval_status = RetrievalStatus(feedback.status)
+
     return SearchResponse(
         query=payload.query,
         collection=COLLECTION_NAME,
+        retrievalStatus=retrieval_status,
+        recommendedNextAction=feedback.next_action,
+        topScore=round(feedback.top_score, 6),
+        scoreGap=round(feedback.score_gap, 6),
+        observationReason=feedback.reason,
         hits=hits,
     )
 

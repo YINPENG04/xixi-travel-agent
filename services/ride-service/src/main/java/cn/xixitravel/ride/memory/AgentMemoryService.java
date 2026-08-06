@@ -29,18 +29,18 @@ public class AgentMemoryService {
 
     private final AgentMemoryRepository repository;
     private final AgentMemoryCache cache;
-    private final AgentMemoryIndexClient indexClient;
+    private final AgentMemoryIndexJobService indexJobService;
     private final Clock clock;
 
     public AgentMemoryService(
             AgentMemoryRepository repository,
             AgentMemoryCache cache,
-            AgentMemoryIndexClient indexClient,
+            AgentMemoryIndexJobService indexJobService,
             Clock clock
     ) {
         this.repository = repository;
         this.cache = cache;
-        this.indexClient = indexClient;
+        this.indexJobService = indexJobService;
         this.clock = clock;
     }
 
@@ -89,8 +89,9 @@ public class AgentMemoryService {
                         clock.instant()
                 ));
         AgentMemory saved = repository.saveAndFlush(entity).toView();
+        String indexJobId = indexJobService.enqueueUpsert(saved);
         cache.evictAfterCommit(normalizedUserId);
-        afterCommit(() -> indexMemory(saved));
+        afterCommit(() -> indexJobService.process(indexJobId));
         return saved;
     }
 
@@ -112,8 +113,9 @@ public class AgentMemoryService {
                 .map(entity -> {
                     AgentMemory deleted = entity.toView();
                     repository.delete(entity);
+                    String indexJobId = indexJobService.enqueueDelete(deleted);
                     cache.evictAfterCommit(normalizedUserId);
-                    afterCommit(() -> deleteIndexedMemory(deleted));
+                    afterCommit(() -> indexJobService.process(indexJobId));
                     return true;
                 })
                 .orElse(false);
@@ -132,7 +134,7 @@ public class AgentMemoryService {
 
         final MemoryIndexSearchResponse indexed;
         try {
-            indexed = indexClient.search(
+            indexed = indexJobService.search(
                     normalizedUserId,
                     normalizedQuery,
                     INDEX_CANDIDATE_LIMIT
@@ -212,22 +214,6 @@ public class AgentMemoryService {
             return java.util.HexFormat.of().formatHex(digest);
         } catch (NoSuchAlgorithmException exception) {
             throw new IllegalStateException("SHA-256 is unavailable", exception);
-        }
-    }
-
-    private void indexMemory(AgentMemory memory) {
-        try {
-            indexClient.upsert(memory);
-        } catch (AgentMemoryIndexUnavailableException exception) {
-            log.warn("Failed to index memory {}: {}", memory.memoryId(), exception.getMessage());
-        }
-    }
-
-    private void deleteIndexedMemory(AgentMemory memory) {
-        try {
-            indexClient.delete(memory.userId(), memory.memoryId());
-        } catch (AgentMemoryIndexUnavailableException exception) {
-            log.warn("Failed to delete indexed memory {}: {}", memory.memoryId(), exception.getMessage());
         }
     }
 

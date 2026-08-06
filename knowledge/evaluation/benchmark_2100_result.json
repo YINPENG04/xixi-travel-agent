@@ -1,5 +1,6 @@
 {
   "benchmark_date": "2026-08-03",
+  "benchmark_kind": "synthetic_surface_regression",
   "dataset": "knowledge/evaluation/xixi_eval_holdout_2100.jsonl",
   "parameter_selection_dataset": "knowledge/evaluation/xixi_eval_2100.jsonl",
   "queries": 2100,
@@ -77,5 +78,5 @@
     "recall_at_3_percentage_points": 0.1429,
     "mrr_at_3_percentage_points": 1.0238
   },
-  "limitations": "留出集使用未参与调参的前后缀，但与开发集共享核心意图模板，且知识库只有 7 条文档；结果用于回归验证和方案对照，不代表真实生产流量。"
+  "limitations": "两套合成集由相同的 70 个核心问题拼接不同前后缀生成，且知识库只有 7 条文档；查询字符串不重合不等于语义独立留出。结果只用于回归验证和方案对照，不能作为真实用户分布下的准确率或泛化能力证据。"
 }
