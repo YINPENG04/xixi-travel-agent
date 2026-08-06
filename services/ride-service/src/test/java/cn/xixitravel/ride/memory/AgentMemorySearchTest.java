@@ -27,7 +27,7 @@ class AgentMemorySearchTest {
     private AgentMemoryCache cache;
 
     @Mock
-    private AgentMemoryIndexClient indexClient;
+    private AgentMemoryIndexJobService indexJobService;
 
     private AgentMemoryService service;
 
@@ -36,7 +36,7 @@ class AgentMemorySearchTest {
         service = new AgentMemoryService(
                 repository,
                 cache,
-                indexClient,
+                indexJobService,
                 Clock.fixed(Instant.parse("2026-08-04T12:00:00Z"), ZoneOffset.UTC)
         );
     }
@@ -67,7 +67,7 @@ class AgentMemorySearchTest {
         when(cache.currentVersion("user-1")).thenReturn(7L);
         when(cache.getSearch(eq("user-1"), eq(7L), org.mockito.ArgumentMatchers.anyString()))
                 .thenReturn(Optional.empty());
-        when(indexClient.search("user-1", "今天有两个大箱子", 5))
+        when(indexJobService.search("user-1", "今天有两个大箱子", 5))
                 .thenReturn(new MemoryIndexSearchResponse(
                         "今天有两个大箱子",
                         "xixi_user_memories",
@@ -99,7 +99,7 @@ class AgentMemorySearchTest {
         when(cache.currentVersion("user-1")).thenReturn(0L);
         when(cache.getSearch(eq("user-1"), eq(0L), org.mockito.ArgumentMatchers.anyString()))
                 .thenReturn(Optional.empty());
-        when(indexClient.search("user-1", "推荐车型", 5))
+        when(indexJobService.search("user-1", "推荐车型", 5))
                 .thenThrow(new AgentMemoryIndexUnavailableException("down", null));
 
         AgentMemorySearchResponse response = service.search("user-1", "推荐车型");

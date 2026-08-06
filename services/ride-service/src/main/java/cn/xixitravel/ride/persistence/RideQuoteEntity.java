@@ -26,6 +26,12 @@ public class RideQuoteEntity {
     @Column(name = "vehicle_name", length = 32, nullable = false)
     private String vehicleName;
 
+    @Column(length = 255, nullable = false)
+    private String origin;
+
+    @Column(length = 255, nullable = false)
+    private String destination;
+
     @Column(nullable = false)
     private int seats;
 
@@ -49,6 +55,8 @@ public class RideQuoteEntity {
 
     private RideQuoteEntity(RideQuote quote) {
         this.quoteId = quote.quoteId();
+        this.origin = quote.origin();
+        this.destination = quote.destination();
         this.vehicleType = quote.vehicleType();
         this.vehicleName = quote.vehicleName();
         this.seats = quote.seats();
@@ -66,6 +74,8 @@ public class RideQuoteEntity {
     public RideQuote toDomain() {
         return new RideQuote(
                 quoteId,
+                origin,
+                destination,
                 vehicleType,
                 vehicleName,
                 seats,

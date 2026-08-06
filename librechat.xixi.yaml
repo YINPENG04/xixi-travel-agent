@@ -43,6 +43,23 @@ mcpServers:
     type: sse
     url: http://ride-service:8081/sse
     timeout: 30000
+    serverInstructions: |
+      Use a bounded ReAct-style loop for Xixi travel tasks. Keep private reasoning
+      private; expose only concise conclusions, tool actions, and evidence.
+      1. Decide which missing fact or business state is needed before acting.
+      2. Call the smallest relevant MCP tool and treat its structured result as
+         the observation for the next decision.
+      3. For travelKnowledgeSearch, start with an empty cycleId and inspect
+         terminal, retrievalStatus, observationReason, topScore, and scoreGap.
+         If terminal is false, rewrite the query with the missing place, vehicle,
+         policy, safety, or invoice entity and retry with the returned cycleId.
+      4. The backend permits at most two searches per cycle and rejects an
+         unchanged retry. When terminal is true, stop searching. If no evidence
+         was found, say so explicitly and do not invent a rule.
+      5. Do not create or cancel an order without the prepare-confirm-execute
+         flow and an explicit user confirmation between prepare and execute.
+      6. Stop the loop as soon as the answer is supported or the requested
+         business action reaches a terminal result.
 
 endpoints:
   agents:

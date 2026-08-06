@@ -5,6 +5,7 @@ import cn.xixitravel.ride.api.QuoteRequest;
 import cn.xixitravel.ride.domain.RideOrder;
 import cn.xixitravel.ride.domain.RideQuote;
 import cn.xixitravel.ride.domain.RideStatus;
+import cn.xixitravel.ride.confirmation.RideConfirmationChallenge;
 import cn.xixitravel.ride.service.RideService;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -105,10 +106,24 @@ class RideEventProcessorIntegrationTest {
                 new QuoteRequest("故宫博物院", "北京南站", 12.6, 28)
         ).getFirst();
         String userId = "event-user-" + UUID.randomUUID();
+        String conversationId = "event-conversation-" + UUID.randomUUID();
+        RideConfirmationChallenge challenge = rideService.prepareCreate(
+                userId,
+                conversationId,
+                quote.quoteId(),
+                quote.origin(),
+                quote.destination()
+        );
         RideOrder order = rideService.createRide(
                 userId,
                 "event-request-" + UUID.randomUUID(),
-                new CreateRideRequest(quote.quoteId(), "故宫博物院", "北京南站")
+                new CreateRideRequest(
+                        quote.quoteId(),
+                        quote.origin(),
+                        quote.destination(),
+                        conversationId,
+                        challenge.confirmationToken()
+                )
         );
         return new CreatedRide(userId, order);
     }

@@ -7,6 +7,7 @@ from knowledge.hybrid_retrieval import (
     KnowledgeDocument,
     RetrievalCandidate,
     rerank,
+    retrieval_feedback,
     weighted_score_fusion,
 )
 
@@ -105,6 +106,39 @@ class HybridRetrievalTest(unittest.TestCase):
 
         self.assertEqual(1, results[0].document.id)
         self.assertEqual(0.82, results[0].score)
+
+    def test_retrieval_feedback_drives_a_bounded_agent_retry(self) -> None:
+        self.assertEqual(
+            "EMPTY",
+            retrieval_feedback([], min_score=0.40).status,
+        )
+        self.assertEqual(
+            "LOW_SCORE",
+            retrieval_feedback(
+                [RetrievalCandidate(DOCUMENTS[0], 0.35)],
+                min_score=0.40,
+            ).status,
+        )
+        ambiguous = retrieval_feedback(
+            [
+                RetrievalCandidate(DOCUMENTS[0], 0.82),
+                RetrievalCandidate(DOCUMENTS[1], 0.80),
+            ],
+            min_score=0.40,
+            min_score_gap=0.03,
+        )
+        self.assertEqual("AMBIGUOUS", ambiguous.status)
+        self.assertAlmostEqual(0.02, ambiguous.score_gap)
+        found = retrieval_feedback(
+            [
+                RetrievalCandidate(DOCUMENTS[0], 0.82),
+                RetrievalCandidate(DOCUMENTS[1], 0.70),
+            ],
+            min_score=0.40,
+            min_score_gap=0.03,
+        )
+        self.assertEqual("EVIDENCE_FOUND", found.status)
+        self.assertAlmostEqual(0.12, found.score_gap)
 
 
 if __name__ == "__main__":

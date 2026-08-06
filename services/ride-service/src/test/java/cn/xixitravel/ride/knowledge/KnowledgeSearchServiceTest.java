@@ -32,6 +32,11 @@ class KnowledgeSearchServiceTest {
                         {
                           "query": "发票怎么开",
                           "collection": "xixi_travel_knowledge",
+                          "retrievalStatus": "EVIDENCE_FOUND",
+                          "recommendedNextAction": "VERIFY_COVERAGE_THEN_ANSWER",
+                          "topScore": 0.91,
+                          "scoreGap": 0.22,
+                          "observationReason": "召回结果达到分数和区分度要求",
                           "hits": [
                             {
                               "id": 7,
@@ -47,6 +52,11 @@ class KnowledgeSearchServiceTest {
         KnowledgeSearchResponse response = service.search("发票怎么开", 3, null);
 
         assertThat(response.collection()).isEqualTo("xixi_travel_knowledge");
+        assertThat(response.retrievalStatus()).isEqualTo("EVIDENCE_FOUND");
+        assertThat(response.recommendedNextAction())
+                .isEqualTo("VERIFY_COVERAGE_THEN_ANSWER");
+        assertThat(response.topScore()).isEqualTo(0.91);
+        assertThat(response.scoreGap()).isEqualTo(0.22);
         assertThat(response.hits()).singleElement().satisfies(hit -> {
             assertThat(hit.category()).isEqualTo("invoice");
             assertThat(hit.title()).isEqualTo("电子发票");

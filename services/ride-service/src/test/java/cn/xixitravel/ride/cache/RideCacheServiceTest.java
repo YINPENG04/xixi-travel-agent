@@ -56,6 +56,8 @@ class RideCacheServiceTest {
     void cachesQuoteUntilItsBusinessExpiry() {
         RideQuote quote = new RideQuote(
                 "Q-CACHE",
+                "北京南站",
+                "首都机场",
                 VehicleType.ECONOMY,
                 "轻享",
                 4,

@@ -29,7 +29,9 @@ spring:
         instructions: >
           嘻嘻出行工具提供知识检索、长期记忆检索、Session 状态、报价、创建订单、查询状态、取消订单、异步通知和发票资格查询能力。
           回答地点别名、车型、报价规则、安全要求或发票政策前，优先调用知识检索工具，
-          只根据检索结果中存在的事实回答；没有匹配资料时应明确说明。
+          将工具结果作为 ReAct Observation：首次调用不传 cycleId；仅在 terminal=false 时，
+          根据 observationReason 补充关键实体并携带 cycleId 重试一次。terminal=true 后不得继续检索，
+          只根据 hits 中存在的事实回答；没有匹配资料时应明确说明。
           个性化推荐前优先检索当前用户的长期记忆；只有用户明确同意时才保存或删除长期记忆。
           当前报价、订单和待确认操作属于 Session 短期状态，不得写入长期记忆。
           创建或取消订单前必须取得用户明确确认。
@@ -49,6 +51,8 @@ xixi:
     memory-ttl: ${XIXI_MEMORY_CACHE_TTL:30m}
     memory-search-ttl: ${XIXI_MEMORY_SEARCH_CACHE_TTL:10m}
     session-context-ttl: ${XIXI_SESSION_CONTEXT_TTL:30m}
+    react-rag-ttl: ${XIXI_REACT_RAG_TTL:10m}
+    react-rag-lock-ttl: ${XIXI_REACT_RAG_LOCK_TTL:30s}
   memory:
     semantic-index-enabled: ${XIXI_MEMORY_INDEX_ENABLED:true}
     index-url: ${XIXI_MEMORY_INDEX_URL:${XIXI_KNOWLEDGE_BASE_URL:http://localhost:8090}}

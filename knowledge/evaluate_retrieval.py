@@ -13,9 +13,9 @@ from urllib.error import HTTPError, URLError
 from urllib.request import Request, urlopen
 
 
-DEFAULT_DATASET = (
-    Path(__file__).parent / "evaluation" / "xixi_eval_holdout_2100.jsonl"
-)
+# 默认使用人工编写的冒烟集。2100 条前后缀扩增数据必须显式传入，避免把
+# 合成表述变体误当作独立留出集或真实流量准确率。
+DEFAULT_DATASET = Path(__file__).parent / "evaluation" / "xixi_eval.jsonl"
 DEFAULT_MODES = ("semantic", "keyword", "hybrid", "hybrid_rerank")
 
 
