@@ -57,13 +57,21 @@ flowchart LR
 
 ### Agent 调用链路
 
-1. 用户在 LibreChat 中描述出发地、目的地或咨询出行规则。
-2. 个性化推荐前，Agent 调用 `travelMemorySearch`，根据当前问题检索相关长期偏好；需要公共领域知识时调用 `travelKnowledgeSearch`。
-3. 需要叫车时，Agent 调用 `rideQuote` 获取车型报价。
-4. Agent 调用 `ridePrepareCreate` 生成与用户、会话、报价和路线绑定的一次性确认凭证，并向用户展示待执行操作。
-5. 用户明确确认后，Agent 携带确认凭证和幂等键调用 `rideCreate`；Spring Boot 在订单事务中原子消费凭证并写入订单。
-6. RocketMQ 异步触发模拟派单、超时检查和用户通知。
-7. Agent 继续调用状态或通知工具，将异步处理结果反馈给用户。取消订单采用相同的准备、确认、执行两阶段流程。
+1. 用户在 LibreChat 中描述出发地、目的地或咨询出行规则，Agent 先调用 `travelTaskStart` 获取结构化意图、缺失槽位和唯一允许的 `nextAction`。
+2. 意图不明确时状态机停留在 `NEEDS_CLARIFICATION`；需要个性化或公共知识时，分别调用 `travelMemorySearch`、`travelKnowledgeSearch`。
+3. 叫车任务按状态机依次进入路线收集、询价、报价选择、准备下单和等待确认阶段，每次工具结果都通过 `travelTaskObserve` 写回。
+4. 用户明确确认后，状态机才允许调用 `rideCreate`；Spring Boot 同时校验一次性确认凭证，在订单事务中原子消费凭证并写入订单。
+5. 创建成功后任务进入 `WAITING_FOR_DISPATCH`，RocketMQ 异步触发模拟派单、超时检查和用户通知；恢复会话时通过 `travelTaskGet` 继续任务。
+6. Agent 查询到派单或终态后写回 Observation 并停止任务。取消订单同样经过准备、确认、执行的合法迁移。
+
+### 任务级执行控制
+
+任务状态按用户 ID 与 conversation ID 隔离并保存在 Redis，默认 TTL 为 30 分钟。后端状态中包含意图、阶段、下一动作、缺失业务资源、失败次数、任务版本和终止原因：
+
+- 确定性意图识别覆盖知识、询价、下单、状态、取消、通知、发票和记忆操作，同时提取路线与订单 ID；多意图同分或未知意图必须先追问。
+- 询价链路只能按 `READY_TO_QUOTE → WAITING_FOR_QUOTE_SELECTION → READY_TO_PREPARE_CREATE → WAITING_FOR_CREATE_CONFIRMATION → READY_TO_CREATE → WAITING_FOR_DISPATCH` 推进。
+- `travelTaskObserve` 通过 Lua CAS 原子校验 `taskId + version` 并续期任务 TTL，拒绝陈旧或重复 Observation；非法阶段不能跳过确认直接进入写操作。
+- 工具失败只允许重试一次，第二次失败进入 `FAILED` 终态；用户拒绝确认进入 `CANCELLED` 终态。
 
 ### ReAct 与 RAG 协作
 
@@ -88,6 +96,10 @@ flowchart LR
 
 | 工具 | 功能 | 关键约束 |
 |---|---|---|
+| `travelIntentRecognize` | 返回结构化意图、候选意图、槽位和缺失槽位 | 未知或歧义意图不得执行写操作 |
+| `travelTaskStart` | 创建或继续当前会话任务 | 只允许执行返回的 `nextAction` |
+| `travelTaskGet` | 恢复当前任务状态 | 按用户与 conversation ID 隔离 |
+| `travelTaskObserve` | 将工具结果写回任务状态机 | Lua CAS 校验任务 ID、版本、合法迁移和失败上限 |
 | `travelKnowledgeSearch` | 在有界 ReAct cycle 中检索地点、车型、规则、安全和发票知识 | Redis 记录用户会话轮次，最多两轮并拒绝重复问题 |
 | `rideQuote` | 生成轻享、舒适、六座三类车型报价 | 创建订单前必须先询价 |
 | `ridePrepareCreate` | 为待创建订单生成一次性确认凭证 | 绑定用户、会话、报价、路线和有效期 |
@@ -99,12 +111,13 @@ flowchart LR
 | `rideInvoiceEligibility` | 查询完成行程的发票申请资格 | 完成事件消费后生成 |
 | `travelMemoryList` | 读取当前用户的长期出行偏好 | 只按用户 ID 返回该用户数据 |
 | `travelMemorySearch` | 根据当前问题语义检索跨 Session 长期记忆 | Milvus 按用户召回 Top 5，MySQL 校验版本后返回 Top 3 |
-| `travelMemoryRemember` | 保存或更新一条长期偏好 | 必须由用户明确确认，拒绝保存订单临时状态和敏感信息 |
-| `travelMemoryForget` | 删除一条长期偏好 | 必须由用户明确确认 |
+| `travelMemoryRemember` | 保存或更新一条长期偏好 | 校验敏感信息、可信度和过期时间；冲突需明确选择保留、替换或合并 |
+| `travelMemoryForget` | 软删除一条长期偏好 | 必须由用户明确确认并写入审计记录 |
+| `travelMemoryAudit` | 查询最近 100 条记忆审计记录 | 不返回历史正文或正文哈希 |
 | `travelSessionContextGet` | 读取当前会话的报价、订单、待确认操作和任务摘要 | 使用用户 ID 与 conversation ID 共同隔离 |
 | `travelSessionContextSave` | 更新当前会话任务状态 | 只写入带 TTL 的 Redis，不作为跨 Session 长期记忆 |
 
-Spring AI 将上述 15 个 Java 方法注册为同步 MCP 工具，并通过 SSE 暴露给 LibreChat。下单和取消不是只依赖提示词：后端签发随机一次性凭证，仅保存其 SHA-256 摘要，并在交易事务中使用悲观锁校验用户、会话、资源、请求指纹、有效期和使用状态。凭证不能跨会话或跨操作复用。
+Spring AI 将上述 20 个 Java 方法注册为同步 MCP 工具，并通过 SSE 暴露给 LibreChat。下单和取消不是只依赖提示词：任务状态机先返回并校验状态推进的合法下一动作，后端再签发随机一次性凭证，仅保存其 SHA-256 摘要，并在交易事务中使用悲观锁校验用户、会话、资源、请求指纹、有效期和使用状态。凭证不能跨会话或跨操作复用。
 
 ## Agent 记忆与上下文压缩
 
@@ -113,7 +126,7 @@ Spring AI 将上述 15 个 Java 方法注册为同步 MCP 工具，并通过 SSE
 ### 短期记忆
 
 - LibreChat 组装当前 Session 的最近消息、MCP 工具结果、RAG 证据和滚动摘要，并将它们作为工作上下文发送给模型。
-- `travelSessionContextSave` 将当前报价、当前订单、待确认操作、任务摘要和摘要进度写入 Redis，键由用户 ID 与 conversation ID 组成，默认 TTL 为 30 分钟；它只服务当前任务，不会转为长期偏好。
+- `travelSessionContextSave` 保存摘要所需的工作状态；`travelTaskStart/Get/Observe` 另外保存受控任务的意图、阶段、下一动作、资源 ID、版本和失败次数。两类 Redis 键都按用户 ID 与 conversation ID 隔离并默认保留 30 分钟。
 - `librechat.xixi.yaml` 在上下文使用率达到 80% 时触发增量摘要，并保留最近 6 轮或 8000 Token；较早且超过 4000 字符的工具结果会先软裁剪，再按位置清除。
 - 原始聊天记录不会因为压缩而从会话存储中删除；订单、报价和行程状态始终通过 MCP 从 MySQL/Redis 查询，不能由摘要替代。
 
@@ -121,17 +134,19 @@ Spring AI 将上述 15 个 Java 方法注册为同步 MCP 工具，并通过 SSE
 
 1. Agent 识别出稳定的跨 Session 偏好，例如“带大件行李时优先六座车型”。
 2. Agent 先询问用户是否长期保存；`travelMemoryRemember` 只有收到 `confirmedByUser=true` 才允许写入。
-3. MySQL 保存记忆正文、类别、版本和更新时间，作为更新、删除和校验的权威数据。
+3. 写入前由代码拦截密码、验证码、证件号、手机号、支付卡、API 凭证、报价 ID 和订单 ID；MySQL 保存记忆正文、类别、版本、可信度、状态和过期时间，作为更新、删除和校验的权威数据。
 4. 同一数据库事务写入待处理的记忆索引任务；事务提交后生成向量并写入 Milvus 的 `xixi_user_memories` Collection，再使 Redis 列表缓存与召回缓存失效。
 
-删除同样需要用户确认：先删除 MySQL 权威记录并登记索引任务，事务提交后再删除对应向量索引并清除缓存。Milvus 暂时不可用时，任务保留在 MySQL 并按指数退避重试；重复执行使用 upsert 或按主键删除，避免数据库成功而索引永久丢失。
+同一用户、类别和 key 出现不同值时不会静默覆盖：Agent 必须向用户展示冲突，并明确选择 `KEEP_EXISTING`、`REPLACE` 或 `MERGE`。合并采用去重后的稳定顺序；默认保留期为常用地点 180 天、其他分类 365 天，也可以由用户指定 1～3650 天或明确设为不过期。
+
+删除同样需要用户确认：MySQL 将记录软删除并登记索引任务，事务提交后再删除对应向量索引并清除缓存。定时任务将到期记忆标为 `EXPIRED` 并删除向量索引；Milvus 暂时不可用时，任务保留在 MySQL 并按指数退避重试。创建、重新确认、冲突处理、合并、替换、过期和遗忘都写入只含摘要元数据的审计表，审计接口不暴露历史正文或哈希。
 
 ### 长期记忆 Retrieve
 
 1. 首先按用户 ID、查询摘要和记忆版本检查 Redis 召回缓存。
 2. 未命中时，在 `xixi_user_memories` 中使用 `user_id` 过滤并语义召回 Top 5，避免跨用户检索。
-3. 回到 MySQL 校验记录仍存在且版本与索引一致，过滤已删除或旧版本向量。
-4. 按相似度和更新时间排序后返回 Top 3，作为“相关用户记忆”注入当前 Session 上下文。
+3. 回到 MySQL 校验记录处于 `ACTIVE`、尚未过期且版本与索引一致，过滤低于可信度阈值、已删除、已过期或旧版本向量。
+4. 使用“语义分数 × 可信度”排序并返回 Top 3，作为“相关用户记忆”注入当前 Session 上下文。
 
 公共知识与用户记忆使用不同 Collection：`xixi_travel_knowledge` 保存所有用户共享的地点、车型、安全和发票知识；`xixi_user_memories` 只保存长期记忆的向量索引并强制按用户过滤。长期记忆列表默认缓存 30 分钟，语义召回结果默认缓存 10 分钟。
 

@@ -46,6 +46,19 @@ public class AgentMemoryEntity {
     @Column(name = "memory_version", nullable = false)
     private long memoryVersion;
 
+    @Column(nullable = false)
+    private double confidence;
+
+    @Column(name = "expires_at")
+    private Instant expiresAt;
+
+    @Enumerated(EnumType.STRING)
+    @Column(name = "memory_status", length = 16, nullable = false)
+    private AgentMemoryStatus status;
+
+    @Column(name = "deleted_at")
+    private Instant deletedAt;
+
     @Version
     @Column(name = "lock_version", nullable = false)
     private long lockVersion;
@@ -61,6 +74,19 @@ public class AgentMemoryEntity {
             String memoryValue,
             Instant now
     ) {
+        this(memoryId, userId, category, memoryKey, memoryValue, now, 1.0, null);
+    }
+
+    public AgentMemoryEntity(
+            String memoryId,
+            String userId,
+            AgentMemoryCategory category,
+            String memoryKey,
+            String memoryValue,
+            Instant now,
+            double confidence,
+            Instant expiresAt
+    ) {
         this.memoryId = memoryId;
         this.userId = userId;
         this.category = category;
@@ -69,12 +95,56 @@ public class AgentMemoryEntity {
         this.createdAt = now;
         this.updatedAt = now;
         this.memoryVersion = 1;
+        this.confidence = confidence;
+        this.expiresAt = expiresAt;
+        this.status = AgentMemoryStatus.ACTIVE;
     }
 
     public void updateValue(String value, Instant now) {
+        update(value, confidence, expiresAt, now);
+    }
+
+    public void update(String value, double confidence, Instant expiresAt, Instant now) {
         this.memoryValue = value;
+        this.confidence = confidence;
+        this.expiresAt = expiresAt;
+        this.status = AgentMemoryStatus.ACTIVE;
+        this.deletedAt = null;
         this.updatedAt = now;
         this.memoryVersion++;
+    }
+
+    public void refreshMetadata(double confidence, Instant expiresAt, Instant now) {
+        this.confidence = confidence;
+        this.expiresAt = expiresAt;
+        this.status = AgentMemoryStatus.ACTIVE;
+        this.deletedAt = null;
+        this.updatedAt = now;
+        this.memoryVersion++;
+    }
+
+    public void expire(Instant now) {
+        if (status != AgentMemoryStatus.ACTIVE) {
+            return;
+        }
+        status = AgentMemoryStatus.EXPIRED;
+        updatedAt = now;
+        memoryVersion++;
+    }
+
+    public void delete(Instant now) {
+        if (status == AgentMemoryStatus.DELETED) {
+            return;
+        }
+        status = AgentMemoryStatus.DELETED;
+        deletedAt = now;
+        updatedAt = now;
+        memoryVersion++;
+    }
+
+    public boolean isActiveAt(Instant now) {
+        return status == AgentMemoryStatus.ACTIVE
+                && (expiresAt == null || expiresAt.isAfter(now));
     }
 
     public AgentMemory toView() {
@@ -85,7 +155,46 @@ public class AgentMemoryEntity {
                 memoryKey,
                 memoryValue,
                 updatedAt,
-                memoryVersion
+                memoryVersion,
+                confidence,
+                expiresAt,
+                status
         );
+    }
+
+    public String getMemoryId() {
+        return memoryId;
+    }
+
+    public String getUserId() {
+        return userId;
+    }
+
+    public AgentMemoryCategory getCategory() {
+        return category;
+    }
+
+    public String getMemoryKey() {
+        return memoryKey;
+    }
+
+    public String getMemoryValue() {
+        return memoryValue;
+    }
+
+    public long getMemoryVersion() {
+        return memoryVersion;
+    }
+
+    public double getConfidence() {
+        return confidence;
+    }
+
+    public Instant getExpiresAt() {
+        return expiresAt;
+    }
+
+    public AgentMemoryStatus getStatus() {
+        return status;
     }
 }
