@@ -25,6 +25,11 @@ class McpToolConfigurationTest {
                         "travelMemorySearch",
                         "travelMemoryRemember",
                         "travelMemoryForget",
+                        "travelMemoryAudit",
+                        "travelIntentRecognize",
+                        "travelTaskStart",
+                        "travelTaskGet",
+                        "travelTaskObserve",
                         "travelSessionContextGet",
                         "travelSessionContextSave"
                 );

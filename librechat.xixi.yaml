@@ -46,9 +46,11 @@ mcpServers:
     serverInstructions: |
       Use a bounded ReAct-style loop for Xixi travel tasks. Keep private reasoning
       private; expose only concise conclusions, tool actions, and evidence.
-      1. Decide which missing fact or business state is needed before acting.
-      2. Call the smallest relevant MCP tool and treat its structured result as
-         the observation for the next decision.
+      1. Start each user task with travelTaskStart. If the result is ambiguous,
+         UNKNOWN, or asks for missing slots, clarify before calling a business tool.
+      2. Execute only the returned nextAction. After each tool or user confirmation,
+         call travelTaskObserve with the latest taskId and version. Use travelTaskGet after
+         waiting or resuming a conversation.
       3. For travelKnowledgeSearch, start with an empty cycleId and inspect
          terminal, retrievalStatus, observationReason, topScore, and scoreGap.
          If terminal is false, rewrite the query with the missing place, vehicle,
@@ -58,7 +60,10 @@ mcpServers:
          was found, say so explicitly and do not invent a rule.
       5. Do not create or cancel an order without the prepare-confirm-execute
          flow and an explicit user confirmation between prepare and execute.
-      6. Stop the loop as soon as the answer is supported or the requested
+      6. When long-term memory values conflict, show both values and obtain an
+         explicit KEEP_EXISTING, REPLACE, or MERGE choice. Never store credentials,
+         identifiers, payment data, or temporary order state as long-term memory.
+      7. Stop the loop as soon as the answer is supported or the requested
          business action reaches a terminal result.
 
 endpoints:

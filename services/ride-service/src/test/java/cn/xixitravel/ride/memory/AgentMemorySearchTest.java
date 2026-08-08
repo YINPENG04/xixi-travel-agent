@@ -27,6 +27,9 @@ class AgentMemorySearchTest {
     private AgentMemoryCache cache;
 
     @Mock
+    private AgentMemoryAuditRepository auditRepository;
+
+    @Mock
     private AgentMemoryIndexJobService indexJobService;
 
     private AgentMemoryService service;
@@ -35,8 +38,10 @@ class AgentMemorySearchTest {
     void setUp() {
         service = new AgentMemoryService(
                 repository,
+                auditRepository,
                 cache,
                 indexJobService,
+                new MemorySensitiveDataPolicy(),
                 Clock.fixed(Instant.parse("2026-08-04T12:00:00Z"), ZoneOffset.UTC)
         );
     }
@@ -106,5 +111,32 @@ class AgentMemorySearchTest {
 
         assertThat(response.semanticIndexAvailable()).isFalse();
         assertThat(response.hits()).isEmpty();
+    }
+
+    @Test
+    void filtersLowConfidenceCandidatesEvenWhenTheIndexVersionMatches() {
+        AgentMemoryEntity lowConfidence = new AgentMemoryEntity(
+                "memory-low-confidence",
+                "user-1",
+                AgentMemoryCategory.PREFERENCE,
+                "inferred_vehicle",
+                "可能喜欢舒适型",
+                Instant.parse("2026-08-04T11:00:00Z"),
+                0.40,
+                Instant.parse("2027-08-04T11:00:00Z")
+        );
+        when(cache.currentVersion("user-1")).thenReturn(8L);
+        when(cache.getSearch(eq("user-1"), eq(8L), org.mockito.ArgumentMatchers.anyString()))
+                .thenReturn(Optional.empty());
+        when(indexJobService.search("user-1", "推荐车型", 5))
+                .thenReturn(new MemoryIndexSearchResponse(
+                        "推荐车型",
+                        "xixi_user_memories",
+                        List.of(new IndexedMemoryHit("memory-low-confidence", 1, 0.99))
+                ));
+        when(repository.findByUserIdAndMemoryIdIn(eq("user-1"), anyCollection()))
+                .thenReturn(List.of(lowConfidence));
+
+        assertThat(service.search("user-1", "推荐车型").hits()).isEmpty();
     }
 }

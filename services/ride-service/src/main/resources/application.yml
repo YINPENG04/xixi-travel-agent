@@ -32,7 +32,11 @@ spring:
           将工具结果作为 ReAct Observation：首次调用不传 cycleId；仅在 terminal=false 时，
           根据 observationReason 补充关键实体并携带 cycleId 重试一次。terminal=true 后不得继续检索，
           只根据 hits 中存在的事实回答；没有匹配资料时应明确说明。
+          每个任务先调用 travelTaskStart，并只执行返回的 nextAction；工具完成后携带最近任务的 taskId 和 version 调用 travelTaskObserve 写回结构化结果，
+          异步等待或会话恢复时先调用 travelTaskGet。ambiguous 或 UNKNOWN 意图必须先追问。
           个性化推荐前优先检索当前用户的长期记忆；只有用户明确同意时才保存或删除长期记忆。
+          长期记忆同键冲突必须展示新旧值并取得用户对 KEEP_EXISTING、REPLACE 或 MERGE 的明确选择，
+          不得把凭证、证件、手机号、支付信息、报价 ID、订单 ID 或临时状态写入长期记忆。
           当前报价、订单和待确认操作属于 Session 短期状态，不得写入长期记忆。
           创建或取消订单前必须取得用户明确确认。
         sse-message-endpoint: /mcp/messages

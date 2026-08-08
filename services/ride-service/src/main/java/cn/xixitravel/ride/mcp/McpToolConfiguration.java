@@ -5,6 +5,7 @@ import cn.xixitravel.ride.knowledge.KnowledgeReActLoopService;
 import cn.xixitravel.ride.messaging.RideAsyncQueryService;
 import cn.xixitravel.ride.memory.AgentMemoryService;
 import cn.xixitravel.ride.service.RideService;
+import cn.xixitravel.ride.task.TravelTaskService;
 import org.springframework.ai.tool.ToolCallbackProvider;
 import org.springframework.ai.tool.method.MethodToolCallbackProvider;
 import org.springframework.context.annotation.Bean;
@@ -19,7 +20,8 @@ public class McpToolConfiguration {
             KnowledgeReActLoopService knowledgeReActLoopService,
             RideAsyncQueryService asyncQueryService,
             AgentMemoryService agentMemoryService,
-            SessionContextService sessionContextService
+            SessionContextService sessionContextService,
+            TravelTaskService travelTaskService
     ) {
         return MethodToolCallbackProvider.builder()
                 .toolObjects(new RideTools(
@@ -27,7 +29,8 @@ public class McpToolConfiguration {
                         knowledgeReActLoopService,
                         asyncQueryService,
                         agentMemoryService,
-                        sessionContextService
+                        sessionContextService,
+                        travelTaskService
                 ))
                 .build();
     }
